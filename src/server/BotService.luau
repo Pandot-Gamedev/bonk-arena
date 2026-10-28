@@ -28,6 +28,13 @@ local BOT_HAMMERS = { "hammer_foam", "hammer_blue", "hammer_green", "hammer_purp
 
 BotService.WalkSpeed = 15
 local REACH = 6.5
+-- Roblox's own R15 animations, so bots walk and jump like players do
+local ANIMATIONS = {
+	idle = "rbxassetid://507766388",
+	walk = "rbxassetid://507777826",
+	jump = "rbxassetid://507765000",
+	fall = "rbxassetid://507767968",
+}
 
 local random = Random.new()
 local folder
@@ -35,6 +42,56 @@ local nameIndex = 0
 
 local function flat(vector)
 	return Vector3.new(vector.X, 0, vector.Z)
+end
+
+-- Plays the idle, walk, jump and fall animations to match what the bot is doing
+local function animate(humanoid)
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+	local tracks = {}
+	for name, id in pairs(ANIMATIONS) do
+		local animation = Instance.new("Animation")
+		animation.AnimationId = id
+		local ok, track = pcall(animator.LoadAnimation, animator, animation)
+		if ok and track then
+			track.Looped = name ~= "jump"
+			tracks[name] = track
+		end
+	end
+	local current = nil
+	local function play(name, speed)
+		local track = tracks[name]
+		if track ~= current then
+			if current then
+				current:Stop(0.2)
+			end
+			current = track
+			if track then
+				track:Play(0.2)
+			end
+		end
+		if track and speed then
+			track:AdjustSpeed(speed)
+		end
+	end
+	humanoid.Running:Connect(function(speed)
+		if speed > 0.5 then
+			play("walk", math.clamp(speed / 14, 0.6, 1.6))
+		else
+			play("idle")
+		end
+	end)
+	humanoid.StateChanged:Connect(function(_, state)
+		if state == Enum.HumanoidStateType.Jumping then
+			play("jump")
+		elseif state == Enum.HumanoidStateType.Freefall then
+			play("fall")
+		end
+	end)
+	play("idle")
 end
 
 -- Makes a bot model standing at cframe. Returns its combat entity.
@@ -64,6 +121,11 @@ function BotService.Create(cframe)
 	pcall(function()
 		root:SetNetworkOwner(nil)
 	end)
+	local oldAnimate = model:FindFirstChild("Animate")
+	if oldAnimate then
+		oldAnimate:Destroy()
+	end
+	pcall(animate, model:FindFirstChildOfClass("Humanoid"))
 	local entity = CombatService.Register(model, { kind = "bot", name = name .. " (bot)", key = "b" .. model:GetDebugId(), walkSpeed = BotService.WalkSpeed })
 	entity.hammerItem = Cosmetics.ById[BOT_HAMMERS[random:NextInteger(1, #BOT_HAMMERS)]]
 	entity.nextThink = 0

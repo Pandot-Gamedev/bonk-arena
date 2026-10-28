@@ -250,7 +250,7 @@ local function buildSpin(arena)
 		weld.Parent = ring
 	end
 	for index = 0, 3 do
-		local stripe = part({ Name = "Stripe", Size = Vector3.new(0.12, 0.2, radius * 2 - 2), CFrame = CFrame.new(center.X, floorY + 0.12, center.Z) * CFrame.Angles(0, index * math.pi / 4, 0), Color = Color3.fromRGB(120, 60, 30), CanCollide = false, CanQuery = false, Anchored = false, Massless = true, Parent = folder })
+		local stripe = part({ Name = "Stripe", Size = Vector3.new(0.6, 0.2, radius * 2 - 2), CFrame = CFrame.new(center.X, floorY + 0.12, center.Z) * CFrame.Angles(0, index * math.pi / 4, 0), Color = Color3.fromRGB(120, 60, 30), CanCollide = false, CanQuery = false, Anchored = false, Massless = true, Parent = folder })
 		local weld = Instance.new("WeldConstraint")
 		weld.Part0 = spinner
 		weld.Part1 = stripe
@@ -635,6 +635,12 @@ function ArenaService.Build(arenaId, center, parent)
 	local arena = baseArena(Arenas.ById[arenaId] and arenaId or "ice", center)
 	builder(arena)
 	arena.folder.Parent = parent or Workspace
+	-- The server moves the spinning floor, so no player's computer takes it over
+	for _, item in ipairs(arena.folder:GetDescendants()) do
+		if item:IsA("BasePart") and not item.Anchored then
+			pcall(item.SetNetworkOwner, item, nil)
+		end
+	end
 	return arena
 end
 

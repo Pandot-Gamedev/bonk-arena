@@ -44,7 +44,7 @@ local function flat(vector)
 end
 
 local function alive(entity)
-	return entity.root ~= nil and entity.root.Parent ~= nil and entity.humanoid ~= nil and entity.humanoid.Health > 0
+	return entity.root ~= nil and entity.root:IsDescendantOf(workspace) and entity.humanoid ~= nil and entity.humanoid.Health > 0
 end
 CombatService.IsAlive = alive
 
@@ -158,6 +158,7 @@ function CombatService.Reset(entity)
 	entity.speedUntil = 0
 	entity.ironUntil = 0
 	entity.magnetUntil = 0
+	local wasGiant = entity.model:GetAttribute("GiantHammer")
 	entity.model:SetAttribute("GiantHammer", nil)
 	for _, name in ipairs({ "BonkShield", "IronBoots" }) do
 		local item = entity.model:FindFirstChild(name)
@@ -167,6 +168,8 @@ function CombatService.Reset(entity)
 	end
 	if entity.player then
 		CosmeticService.RefreshHammer(entity.player, 1)
+	elseif wasGiant and entity.hammerItem then
+		CosmeticService.BuildHammer(entity.model, entity.hammerItem, 1)
 	end
 	CombatService.UpdateMovement(entity)
 	if entity.humanoid then
@@ -398,6 +401,9 @@ end
 
 function CombatService.Start()
 	local function watch(player)
+		player.CharacterRemoving:Connect(function(character)
+			CombatService.Unregister(character)
+		end)
 		player.CharacterAdded:Connect(function(character)
 			character:WaitForChild("HumanoidRootPart", 10)
 			character:WaitForChild("Humanoid", 10)

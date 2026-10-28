@@ -828,7 +828,7 @@ local function buildSpin(arena)
 		weld.Parent = ring
 	end
 	for index = 0, 3 do
-		local stripe = part({ Name = "Stripe", Size = Vector3.new(0.12, 0.2, radius * 2 - 2), CFrame = CFrame.new(center.X, floorY + 0.12, center.Z) * CFrame.Angles(0, index * math.pi / 4, 0), Color = Color3.fromRGB(120, 60, 30), CanCollide = false, CanQuery = false, Anchored = false, Massless = true, Parent = folder })
+		local stripe = part({ Name = "Stripe", Size = Vector3.new(0.6, 0.2, radius * 2 - 2), CFrame = CFrame.new(center.X, floorY + 0.12, center.Z) * CFrame.Angles(0, index * math.pi / 4, 0), Color = Color3.fromRGB(120, 60, 30), CanCollide = false, CanQuery = false, Anchored = false, Massless = true, Parent = folder })
 		local weld = Instance.new("WeldConstraint")
 		weld.Part0 = spinner
 		weld.Part1 = stripe
@@ -1213,6 +1213,12 @@ function ArenaService.Build(arenaId, center, parent)
 	local arena = baseArena(Arenas.ById[arenaId] and arenaId or "ice", center)
 	builder(arena)
 	arena.folder.Parent = parent or Workspace
+	-- The server moves the spinning floor, so no player's computer takes it over
+	for _, item in ipairs(arena.folder:GetDescendants()) do
+		if item:IsA("BasePart") and not item.Anchored then
+			pcall(item.SetNetworkOwner, item, nil)
+		end
+	end
 	return arena
 end
 
@@ -1247,6 +1253,13 @@ local BOT_HAMMERS = { "hammer_foam", "hammer_blue", "hammer_green", "hammer_purp
 
 BotService.WalkSpeed = 15
 local REACH = 6.5
+-- Roblox's own R15 animations, so bots walk and jump like players do
+local ANIMATIONS = {
+	idle = "rbxassetid://507766388",
+	walk = "rbxassetid://507777826",
+	jump = "rbxassetid://507765000",
+	fall = "rbxassetid://507767968",
+}
 
 local random = Random.new()
 local folder
@@ -1254,6 +1267,56 @@ local nameIndex = 0
 
 local function flat(vector)
 	return Vector3.new(vector.X, 0, vector.Z)
+end
+
+-- Plays the idle, walk, jump and fall animations to match what the bot is doing
+local function animate(humanoid)
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+	local tracks = {}
+	for name, id in pairs(ANIMATIONS) do
+		local animation = Instance.new("Animation")
+		animation.AnimationId = id
+		local ok, track = pcall(animator.LoadAnimation, animator, animation)
+		if ok and track then
+			track.Looped = name ~= "jump"
+			tracks[name] = track
+		end
+	end
+	local current = nil
+	local function play(name, speed)
+		local track = tracks[name]
+		if track ~= current then
+			if current then
+				current:Stop(0.2)
+			end
+			current = track
+			if track then
+				track:Play(0.2)
+			end
+		end
+		if track and speed then
+			track:AdjustSpeed(speed)
+		end
+	end
+	humanoid.Running:Connect(function(speed)
+		if speed > 0.5 then
+			play("walk", math.clamp(speed / 14, 0.6, 1.6))
+		else
+			play("idle")
+		end
+	end)
+	humanoid.StateChanged:Connect(function(_, state)
+		if state == Enum.HumanoidStateType.Jumping then
+			play("jump")
+		elseif state == Enum.HumanoidStateType.Freefall then
+			play("fall")
+		end
+	end)
+	play("idle")
 end
 
 -- Makes a bot model standing at cframe. Returns its combat entity.
@@ -1283,6 +1346,11 @@ function BotService.Create(cframe)
 	pcall(function()
 		root:SetNetworkOwner(nil)
 	end)
+	local oldAnimate = model:FindFirstChild("Animate")
+	if oldAnimate then
+		oldAnimate:Destroy()
+	end
+	pcall(animate, model:FindFirstChildOfClass("Humanoid"))
 	local entity = CombatService.Register(model, { kind = "bot", name = name .. " (bot)", key = "b" .. model:GetDebugId(), walkSpeed = BotService.WalkSpeed })
 	entity.hammerItem = Cosmetics.ById[BOT_HAMMERS[random:NextInteger(1, #BOT_HAMMERS)]]
 	entity.nextThink = 0
@@ -1469,7 +1537,7 @@ local function flat(vector)
 end
 
 local function alive(entity)
-	return entity.root ~= nil and entity.root.Parent ~= nil and entity.humanoid ~= nil and entity.humanoid.Health > 0
+	return entity.root ~= nil and entity.root:IsDescendantOf(workspace) and entity.humanoid ~= nil and entity.humanoid.Health > 0
 end
 CombatService.IsAlive = alive
 
@@ -1583,6 +1651,7 @@ function CombatService.Reset(entity)
 	entity.speedUntil = 0
 	entity.ironUntil = 0
 	entity.magnetUntil = 0
+	local wasGiant = entity.model:GetAttribute("GiantHammer")
 	entity.model:SetAttribute("GiantHammer", nil)
 	for _, name in ipairs({ "BonkShield", "IronBoots" }) do
 		local item = entity.model:FindFirstChild(name)
@@ -1592,6 +1661,8 @@ function CombatService.Reset(entity)
 	end
 	if entity.player then
 		CosmeticService.RefreshHammer(entity.player, 1)
+	elseif wasGiant and entity.hammerItem then
+		CosmeticService.BuildHammer(entity.model, entity.hammerItem, 1)
 	end
 	CombatService.UpdateMovement(entity)
 	if entity.humanoid then
@@ -1823,6 +1894,9 @@ end
 
 function CombatService.Start()
 	local function watch(player)
+		player.CharacterRemoving:Connect(function(character)
+			CombatService.Unregister(character)
+		end)
 		player.CharacterAdded:Connect(function(character)
 			character:WaitForChild("HumanoidRootPart", 10)
 			character:WaitForChild("Humanoid", 10)
