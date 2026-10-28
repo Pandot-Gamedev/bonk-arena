@@ -1,0 +1,20 @@
+-- Everything sold for Robux. Nothing here helps you win: only looks.
+-- The cosmetics sold for Robux (source = "robux") are in Cosmetics.luau with their
+-- developer product ids.
+--
+-- HOW TO FILL IN THE PASS ID (step 5 of the build plan):
+--   Creator Dashboard > your game > Monetization > Passes
+-- An id of 0 means "not set up yet": the pass shows as "Coming soon" in the shop.
+
+local Shop = {}
+
+Shop.Passes = {
+	{ id = "VIP", gamePassId = 0, name = "VIP", suggestedPrice = 250, description = "Golden name tag, a crown, the Royal Hammer and +25% coins (coins only buy looks)." },
+}
+
+Shop.PassById = {}
+for _, pass in ipairs(Shop.Passes) do
+	Shop.PassById[pass.id] = pass
+end
+
+return Shop
