@@ -29,6 +29,7 @@ local POSES_R6 = {
 }
 Swing.ImpactSeconds = 0.17 -- when the hammer hits the ground (Config.BonkImpactDelay matches it)
 Swing.Seconds = 0.46
+local TAKE_OVER = 0.05
 
 local rigs = setmetatable({}, { __mode = "k" }) -- [model] = its joints, kept between swings
 local active = {} -- [model] = the swing playing on it
@@ -79,8 +80,10 @@ local function rig(model)
 	return found
 end
 
--- Turns the joint `degrees` past its animated pose for this frame
-local function turn(j, degrees)
+-- Turns the joint `degrees` from its resting pose. `weight` (0 to 1) is how
+-- much the swing takes over from the animation playing on it, so a running
+-- arm doesn't throw the swing off.
+local function turn(j, degrees, weight)
 	if not j or not j.joint.Parent then
 		return
 	end
@@ -90,7 +93,8 @@ local function turn(j, degrees)
 	if current ~= j.written then
 		j.animated = current
 	end
-	j.joint.Transform = CFrame.fromAxisAngle(j.axis, math.rad(degrees)) * j.animated
+	local from = weight >= 1 and CFrame.identity or j.animated:Lerp(CFrame.identity, weight)
+	j.joint.Transform = CFrame.fromAxisAngle(j.axis, math.rad(degrees)) * from
 	j.written = j.joint.Transform
 end
 
@@ -115,9 +119,12 @@ local function pose(swing, t)
 	end
 	local span = to[1] - from[1]
 	local a = span > 0 and ease(to[5], math.clamp((t - from[1]) / span, 0, 1)) or 1
-	turn(swing.rig.shoulder, from[2] + (to[2] - from[2]) * a)
-	turn(swing.rig.wrist, from[3] + (to[3] - from[3]) * a)
-	turn(swing.rig.waist, from[4] + (to[4] - from[4]) * a)
+	-- Take over within TAKE_OVER seconds, and hand back during the last pose
+	local handBack = poses[#poses - 1][1]
+	local weight = math.clamp(math.min(t / TAKE_OVER, 1 - (t - handBack) / (poses[#poses][1] - handBack)), 0, 1)
+	turn(swing.rig.shoulder, from[2] + (to[2] - from[2]) * a, weight)
+	turn(swing.rig.wrist, from[3] + (to[3] - from[3]) * a, weight)
+	turn(swing.rig.waist, from[4] + (to[4] - from[4]) * a, weight)
 end
 
 -- A short streak behind the hammer head while it moves
