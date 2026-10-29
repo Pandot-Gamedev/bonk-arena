@@ -18,7 +18,7 @@
 local HttpService = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
 
-local UNIVERSE = 0
+local UNIVERSE = 10773598334
 local MAKE_PASSES = true
 local ICONS = "https://raw.githubusercontent.com/Pandot-Gamedev/bonk-arena/refs/heads/claude/project-thread-x8udij/store/"
 local key = HttpService:GetSecret("ShopKey")

@@ -47,10 +47,10 @@ Config.BonkDamageMax = 12
 Config.MaxDamage = 999
 
 -- Knockback speed = Base + Scale * damage (studs per second)
-Config.KnockBase = 30
-Config.KnockScale = 0.8
-Config.KnockUpBase = 35
-Config.KnockUpScale = 0.25
+Config.KnockBase = 16
+Config.KnockScale = 0.6
+Config.KnockUpBase = 22
+Config.KnockUpScale = 0.3
 -- Stunned (tumbling, no control) for Base + Scale * damage seconds, up to Max
 Config.StunBase = 0.3
 Config.StunScale = 0.005
@@ -122,11 +122,11 @@ local function rgb(r, g, b)
 end
 
 Cosmetics.Kinds = {
-	{ id = "hammer", name = "Hammers" },
-	{ id = "ko", name = "Knockout effects" },
-	{ id = "dance", name = "Victory dances" },
-	{ id = "title", name = "Titles" },
-	{ id = "trail", name = "Trails" },
+	{ id = "hammer", name = "Hammers", short = "Hammers" },
+	{ id = "ko", name = "Knockout effects", short = "KO effects" },
+	{ id = "dance", name = "Victory dances", short = "Dances" },
+	{ id = "title", name = "Titles", short = "Titles" },
+	{ id = "trail", name = "Trails", short = "Trails" },
 }
 
 -- Hammer looks: shape "hammer" (foam hammer), "mallet" (wooden mallet),
@@ -390,9 +390,13 @@ function Quests.Generate(userId, day)
 		local isArena = string.sub(quest.id, 1, 6) == "round_"
 		if not (isArena and arenaQuest) then
 			arenaQuest = arenaQuest or isArena
+			local goal = random:NextInteger(quest.goal[1], quest.goal[2])
+			if goal >= 20 then
+				goal = math.floor(goal / 5 + 0.5) * 5 -- 45 bonks, not 43
+			end
 			table.insert(list, {
 				id = quest.id,
-				goal = random:NextInteger(quest.goal[1], quest.goal[2]),
+				goal = goal,
 				progress = 0,
 				done = false,
 			})
@@ -521,6 +525,11 @@ local TutorialService = require(script.TutorialService)
 local ProgressService = require(script.ProgressService)
 local MatchService = require(script.MatchService)
 local WorldService = require(script.WorldService)
+
+-- Players' screens can't check who owns a private server, so share it
+if game.PrivateServerId ~= "" then
+	game:GetService("ReplicatedStorage"):SetAttribute("PrivateServerOwnerId", game.PrivateServerOwnerId)
+end
 
 MapBuilder.Build()
 
@@ -1264,6 +1273,7 @@ local ANIMATIONS = {
 local random = Random.new()
 local folder
 local nameIndex = 0
+local botCount = 0
 
 local function flat(vector)
 	return Vector3.new(vector.X, 0, vector.Z)
@@ -1339,6 +1349,7 @@ function BotService.Create(cframe)
 		warn("[BotService] Couldn't make a bot: " .. tostring(model))
 		return nil
 	end
+	botCount += 1
 	model.Name = "Bot " .. name
 	model:PivotTo(cframe)
 	model.Parent = folder
@@ -1351,7 +1362,7 @@ function BotService.Create(cframe)
 		oldAnimate:Destroy()
 	end
 	pcall(animate, model:FindFirstChildOfClass("Humanoid"))
-	local entity = CombatService.Register(model, { kind = "bot", name = name .. " (bot)", key = "b" .. model:GetDebugId(), walkSpeed = BotService.WalkSpeed })
+	local entity = CombatService.Register(model, { kind = "bot", name = name .. " (bot)", key = "b" .. botCount, walkSpeed = BotService.WalkSpeed })
 	entity.hammerItem = Cosmetics.ById[BOT_HAMMERS[random:NextInteger(1, #BOT_HAMMERS)]]
 	entity.nextThink = 0
 	entity.nextBonk = 0
@@ -1723,42 +1734,58 @@ function CombatService.Push(entity, velocity, stun, addDamage, by)
 end
 
 ------------------------------------------------------------------ Bonking
+-- The right shoulder joint and the axis that lifts the arm forward. Older rigs
+-- use a Motor6D (turn its C0); newer ones an AnimationConstraint (turn the
+-- shoulder attachment on the torso instead).
 local function shoulder(model)
+	local joint, axis = nil, nil
 	local arm = model:FindFirstChild("RightUpperArm")
 	if arm and arm:FindFirstChild("RightShoulder") then
-		return arm.RightShoulder, Vector3.xAxis
+		joint, axis = arm.RightShoulder, Vector3.xAxis
+	else
+		local torso = model:FindFirstChild("Torso")
+		if torso and torso:FindFirstChild("Right Shoulder") then
+			joint, axis = torso["Right Shoulder"], Vector3.zAxis
+		end
 	end
-	local torso = model:FindFirstChild("Torso")
-	if torso and torso:FindFirstChild("Right Shoulder") then
-		return torso["Right Shoulder"], Vector3.zAxis
+	if not joint then
+		return nil
+	end
+	if joint:IsA("Motor6D") then
+		return joint, "C0", axis
+	elseif joint:IsA("AnimationConstraint") and joint.Attachment0 then
+		return joint.Attachment0, "CFrame", axis
 	end
 	return nil
 end
 
 -- Swings the right arm (and the hammer in that hand) up and down
 local function swing(entity)
-	local motor, axis = shoulder(entity.model)
-	if not motor then
+	local target, property, axis = shoulder(entity.model)
+	if not target then
 		return
 	end
-	entity.shoulderBase = entity.shoulderBase or motor.C0
+	if entity.shoulderTarget ~= target then
+		entity.shoulderTarget = target
+		entity.shoulderBase = target[property]
+	end
 	local base = entity.shoulderBase
 	local function at(degrees)
 		return base * CFrame.fromAxisAngle(axis, math.rad(degrees))
 	end
 	entity.swingToken = (entity.swingToken or 0) + 1
 	local token = entity.swingToken
-	TweenService:Create(motor, TweenInfo.new(0.07), { C0 = at(165) }):Play()
+	TweenService:Create(target, TweenInfo.new(0.07), { [property] = at(165) }):Play()
 	task.delay(0.07, function()
-		if entity.swingToken ~= token or not motor.Parent then
+		if entity.swingToken ~= token or not target.Parent then
 			return
 		end
-		TweenService:Create(motor, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { C0 = at(55) }):Play()
+		TweenService:Create(target, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { [property] = at(55) }):Play()
 		task.delay(0.22, function()
-			if entity.swingToken ~= token or not motor.Parent then
+			if entity.swingToken ~= token or not target.Parent then
 				return
 			end
-			TweenService:Create(motor, TweenInfo.new(0.2), { C0 = base }):Play()
+			TweenService:Create(target, TweenInfo.new(0.2), { [property] = base }):Play()
 		end)
 	end)
 end
@@ -3144,6 +3171,7 @@ local function toDeck(match, entity)
 		return
 	end
 	entity.space = nil
+	CombatService.Reset(entity) -- no giant hammer or shield on the deck
 	entity.model:SetAttribute("ShowDamage", false)
 	CombatService.Freeze(entity, false)
 	local spot = match.slot.deck * CFrame.new(random:NextNumber(-12, 12), 0, random:NextNumber(-3, 4))
@@ -4513,6 +4541,7 @@ local WorldService = {}
 
 local LEADERBOARD_REFRESH = 120
 local DUMMY_RESET = 6 -- seconds without a hit before a dummy's damage goes back to 0
+local dummyCount = 0
 
 ------------------------------------------------------------------ Practice dummies
 local function makeDummy(spot)
@@ -4530,6 +4559,7 @@ local function makeDummy(spot)
 	if not ok or not model then
 		return nil
 	end
+	dummyCount += 1
 	model.Name = "PracticeDummy"
 	local home = CFrame.lookAt(spot.Position, Vector3.new(spot.Position.X - 10, spot.Position.Y, spot.Position.Z))
 	model:PivotTo(home)
@@ -4537,7 +4567,7 @@ local function makeDummy(spot)
 	pcall(function()
 		model.HumanoidRootPart:SetNetworkOwner(nil)
 	end)
-	local entity = CombatService.Register(model, { kind = "dummy", name = "Practice Dummy", key = "d" .. model:GetDebugId(), walkSpeed = 8 })
+	local entity = CombatService.Register(model, { kind = "dummy", name = "Practice Dummy", key = "d" .. dummyCount, walkSpeed = 8 })
 	entity.home = home
 	model:SetAttribute("ShowDamage", true)
 	CosmeticService.Tag(model, { name = "Practice Dummy", nameColor = Color3.fromRGB(255, 220, 160), subtitle = "Bonk me!" })
@@ -5314,7 +5344,7 @@ function Hud.Init(screenGui)
 	-- Stats, top left
 	local stats = UI.new("Frame", {
 		Name = "Stats",
-		Position = UDim2.fromOffset(16, 16),
+		Position = UDim2.fromOffset(16, 60),
 		Size = UDim2.fromOffset(230, 96),
 		BackgroundColor3 = T.Background,
 		BackgroundTransparency = 0.15,
@@ -5365,7 +5395,7 @@ function Hud.Init(screenGui)
 	-- Menu buttons, left side under the stats, with keyboard shortcuts
 	local menu = UI.new("Frame", {
 		Name = "Menu",
-		Position = UDim2.fromOffset(16, 122),
+		Position = UDim2.fromOffset(16, 166),
 		Size = UDim2.fromOffset(130, 5 * 48),
 		BackgroundTransparency = 1,
 		Parent = screenGui,
@@ -5390,7 +5420,8 @@ function Hud.Init(screenGui)
 	end, { Size = UDim2.fromOffset(130, 42), LayoutOrder = 10, Visible = false, Parent = menu })
 
 	-- The private server owner picks the arena
-	local isOwner = (game.PrivateServerId ~= "" and game.PrivateServerOwnerId == player.UserId) or RunService:IsStudio()
+	-- Only the server can see who owns a private server; it shares that as an attribute
+	local isOwner = ReplicatedStorage:GetAttribute("PrivateServerOwnerId") == player.UserId or RunService:IsStudio()
 	if isOwner then
 		UI.button("Arena", Color3.fromRGB(255, 120, 60), function()
 			Panels.Arena.toggle()
@@ -5905,6 +5936,13 @@ local function note(parent, text, order)
 end
 
 -- A small colour swatch so you can tell items apart at a glance
+-- An item's name on its card, all at the same size whether it's short or long
+local function itemName(card, text, width)
+	local label = UI.label(text, { Position = UDim2.fromOffset(48, 0), Size = UDim2.new(width, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, Parent = card })
+	UI.new("UITextSizeConstraint", { MaxTextSize = 20, Parent = label })
+	return label
+end
+
 local function swatch(card, item)
 	local color = item.head or item.color or (item.colors and item.colors[1]) or T.Muted
 	UI.new("Frame", { Position = UDim2.fromOffset(10, 12), Size = UDim2.fromOffset(28, 28), BackgroundColor3 = color, Parent = card }, { UI.corner(14), UI.stroke(T.Background, 2) })
@@ -5962,7 +6000,7 @@ local function renderShop(body)
 			for _, item in ipairs(items) do
 				local card = row(body, 52, nextOrder())
 				swatch(card, item)
-				UI.label(item.name, { Position = UDim2.fromOffset(48, 0), Size = UDim2.new(0.6, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, Parent = card })
+				itemName(card, item.name, 0.6)
 				local owned = data.cosmetics.owned[item.id]
 				local equipped = data.cosmetics.equipped[item.kind] == item.id
 				local button = cardButton(card, "...", T.Good)
@@ -6017,7 +6055,7 @@ local function renderLocker(body)
 	-- Tabs, one per kind of cosmetic
 	local tabs = UI.new("Frame", { Size = UDim2.new(1, -8, 0, 36), BackgroundTransparency = 1, LayoutOrder = 0, Parent = body }, { UI.list(6, Enum.FillDirection.Horizontal) })
 	for _, kind in ipairs(Cosmetics.Kinds) do
-		UI.button(kind.name, kind.id == lockerTab and T.Accent or T.Card, function()
+		UI.button(kind.short, kind.id == lockerTab and T.Accent or T.Card, function()
 			lockerTab = kind.id
 			Panels.Locker.refresh()
 		end, { Size = UDim2.fromOffset(104, 34), Parent = tabs })
@@ -6033,7 +6071,7 @@ local function renderLocker(body)
 			local isEquipped = equipped and equipped.id == item.id
 			local card = row(body, 52, order)
 			swatch(card, item)
-			UI.label(item.name, { Position = UDim2.fromOffset(48, 0), Size = UDim2.new(0.55, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, Parent = card })
+			itemName(card, item.name, 0.55)
 			if owns then
 				local canTakeOff = isEquipped and not Cosmetics.Defaults[item.kind]
 				cardButton(card, isEquipped and (canTakeOff and "Take off" or "Equipped") or "Equip", isEquipped and T.Card or T.Accent, function()

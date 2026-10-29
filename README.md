@@ -6,9 +6,16 @@ flying. Built on the Dig Legends code base (saving, shop, menus and notices).
 
 The ready-to-open game file is [build/BonkArena.rbxlx](build/BonkArena.rbxlx).
 
+## The live game
+
+Published (private for now) as **Bonk Arena**: game id 10773598334, place id 73590219706077,
+https://www.roblox.com/games/73590219706077/Bonk-Arena
+
 ## How to test in Roblox Studio
 
-1. Open `build/BonkArena.rbxlx` in Roblox Studio and press **Play**.
+1. Open `build/BonkArena.rbxlx` in Roblox Studio and press **Play**. Or, without the file: open
+   a new Baseplate, run `python3 tools/studio_install.py` and paste the line it prints into the
+   command bar (it downloads the scripts at the current commit from this repo).
 2. Follow the guide at the top of the screen: bonk a practice dummy (click), dash (Q), then
    step on a glowing pad. A match starts after 20 seconds, with bots in the empty spots.
 3. Knock everyone off the arena to win the round. Win 2 rounds to win the match.
@@ -95,4 +102,7 @@ src/client/              StarterPlayerScripts.Client
   MatchHud.luau          round, timer, player cards, announcements, watching a match
   Effects.luau           hit sparks, damage numbers, knockout effects
 tools/build_place.py     rebuilds build/BonkArena.rbxlx from src/
+tools/studio_install.py  prints a command-bar line that installs src/ into an open Studio place
+tools/make_store_art.py  draws the icon, thumbnails and shop icons into store/
+tools/create_shop_items.luau  creates the VIP pass and shop items through Open Cloud
 ```
