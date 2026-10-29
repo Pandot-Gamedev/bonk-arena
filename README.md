@@ -8,7 +8,7 @@ The ready-to-open game file is [build/BonkArena.rbxlx](build/BonkArena.rbxlx).
 
 ## The live game
 
-Published (private for now) as **Bonk Arena**: game id 10773598334, place id 73590219706077,
+Public since 2026-10-29 (ages 16+) as **Bonk Arena**: game id 10773598334, place id 73590219706077,
 https://www.roblox.com/games/73590219706077/Bonk-Arena
 
 ## How to test in Roblox Studio
