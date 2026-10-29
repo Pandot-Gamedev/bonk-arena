@@ -112,6 +112,6 @@ src/client/              StarterPlayerScripts.Client
   Effects.luau           hit sparks, damage numbers, knockout effects, screen shake
 tools/build_place.py     rebuilds build/BonkArena.rbxlx from src/
 tools/studio_install.py  prints a command-bar line that installs src/ into an open Studio place
-tools/make_store_art.py  draws the icon, thumbnails and shop icons into store/
+tools/make_store_art.py  draws the shop icons into store/ (and older drawn icon/thumbnails into store/drawn/)
 tools/create_shop_items.luau  creates the VIP pass and shop items through Open Cloud
 ```
