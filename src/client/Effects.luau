@@ -1,7 +1,11 @@
--- Hit sparks, damage numbers, knockout effects and sounds. The server says what
--- happened and where (the Effect remote); every player draws it on their own screen.
+-- Hit sparks, damage numbers, knockout effects, screen shake and sounds. The
+-- server says what happened and where (the Effect remote); every player draws
+-- it on their own screen.
 
+local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
@@ -10,13 +14,20 @@ local Cosmetics = require(Shared.Cosmetics)
 local PowerUps = require(Shared.PowerUps)
 local Remotes = require(Shared.Remotes)
 
+local Swing = require(script.Parent.Swing)
+
 local Effects = {}
+
+local player = Players.LocalPlayer
 
 local SPARKLE = "rbxasset://textures/particles/sparkles_main.dds"
 local SMOKE = "rbxasset://textures/particles/smoke_main.dds"
+-- { sound, volume, pitch, random pitch +/- }
 local SOUNDS = {
-	bonk = { "rbxasset://sounds/collide.wav", 0.8 },
-	swing = { "rbxasset://sounds/swordslash.wav", 0.25 },
+	bonk = { "rbxasset://sounds/collide.wav", 0.9, 1, 0.12 },
+	thump = { "rbxasset://sounds/collide.wav", 0.35, 0.6, 0.08 },
+	swing = { "rbxasset://sounds/swordslash.wav", 0.3, 1.1, 0.1 },
+	dodge = { "rbxasset://sounds/swordlunge.wav", 0.4, 1.4 },
 	dash = { "rbxasset://sounds/swordlunge.wav", 0.3 },
 	ko = { "rbxasset://sounds/uuhhh.mp3", 0.6 },
 	block = { "rbxasset://sounds/electronicpingshort.wav", 0.5 },
@@ -48,6 +59,7 @@ function Effects.Sound(name, position)
 	local sound = Instance.new("Sound")
 	sound.SoundId = info[1]
 	sound.Volume = info[2]
+	sound.PlaybackSpeed = (info[3] or 1) + (info[4] and (math.random() * 2 - 1) * info[4] or 0)
 	sound.RollOffMaxDistance = 200
 	sound.Parent = holder
 	sound:Play()
@@ -120,6 +132,61 @@ local function ring(position, color, radius)
 	Debris:AddItem(p, 0.4)
 end
 
+-- Shakes your camera a little (when you land a bonk or get bonked)
+local shakeUntil, shakeSeconds, shakeStrength = 0, 1, 0
+function Effects.Shake(strength, seconds)
+	local now = os.clock()
+	local left = now < shakeUntil and shakeStrength * (shakeUntil - now) / shakeSeconds or 0
+	if strength >= left then
+		shakeStrength, shakeSeconds, shakeUntil = strength, seconds, now + seconds
+	end
+end
+
+local function shakeCamera()
+	local now = os.clock()
+	if now >= shakeUntil then
+		return
+	end
+	local camera = Workspace.CurrentCamera
+	local s = shakeStrength * (shakeUntil - now) / shakeSeconds
+	-- Only move sideways and roll, so the camera's own aiming is never thrown off
+	camera.CFrame = camera.CFrame * CFrame.new((math.random() * 2 - 1) * s, (math.random() * 2 - 1) * s, 0) * CFrame.Angles(0, 0, (math.random() * 2 - 1) * s * 0.03)
+end
+
+-- A white flash over a character that just got bonked
+local function flash(model)
+	if typeof(model) ~= "Instance" or not model.Parent then
+		return
+	end
+	local highlight = Instance.new("Highlight")
+	highlight.FillColor = Color3.new(1, 1, 1)
+	highlight.FillTransparency = 0.15
+	highlight.OutlineTransparency = 1
+	highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+	highlight.Adornee = model
+	highlight.Parent = folder
+	TweenService:Create(highlight, TweenInfo.new(0.22), { FillTransparency = 1 }):Play()
+	Debris:AddItem(highlight, 0.25)
+end
+
+-- Dust and a thump where a hammer hits the ground
+local groundParams = RaycastParams.new()
+groundParams.FilterType = Enum.RaycastFilterType.Exclude
+function Effects.Impact(model, position)
+	local ignore = CollectionService:GetTagged("Bonkable")
+	table.insert(ignore, folder)
+	table.insert(ignore, model)
+	groundParams.FilterDescendantsInstances = ignore
+	local hit = Workspace:Raycast(position + Vector3.new(0, 2, 0), Vector3.new(0, -7, 0), groundParams)
+	local at = hit and hit.Position or position
+	ring(at + Vector3.new(0, 0.15, 0), Color3.fromRGB(255, 245, 225), 3)
+	Effects.Burst(at, { Color3.fromRGB(240, 230, 210) }, 8, 10, SMOKE, 1.4)
+	Effects.Sound("thump", at)
+	if model == player.Character then
+		Effects.Shake(0.08, 0.1)
+	end
+end
+
 local function lightning(position, colors)
 	local top = position + Vector3.new(0, 40, 0)
 	local previous = top
@@ -175,19 +242,42 @@ function Effects.Knockout(position, effectId)
 	Effects.Sound("ko", position)
 end
 
+local BIG_WORDS = { "BONK!", "WHAM!", "POW!", "BOING!" }
+
 local handlers = {
 	hit = function(position, extra)
-		Effects.Burst(position, { Color3.fromRGB(255, 240, 150), Color3.fromRGB(255, 150, 60) }, extra and extra.big and 40 or 20, 30)
-		Effects.Popup(position + Vector3.new(0, 3, 0), "+" .. (extra and extra.damage or 0) .. "%", Color3.fromRGB(255, 220, 80), 34)
+		extra = extra or {}
+		local total = extra.total or 0
+		Effects.Burst(position, { Color3.fromRGB(255, 240, 150), Color3.fromRGB(255, 150, 60) }, extra.big and 45 or 25, 32)
+		Effects.Popup(position + Vector3.new(0, 3, 0), "+" .. (extra.damage or 0) .. "%", Color3.fromRGB(255, 220, 80), 34)
+		if extra.big or total >= 80 then
+			Effects.Popup(position + Vector3.new(0, 5, 0), BIG_WORDS[math.random(#BIG_WORDS)], Color3.fromRGB(255, 120, 60), 56, 0.8)
+		end
 		Effects.Sound("bonk", position)
+		flash(extra.target)
+		local character = player.Character
+		if character and extra.target == character then
+			Effects.Shake(0.25 + math.min(total, 150) / 500, 0.25)
+		elseif character and extra.by == character then
+			Effects.Shake(0.18, 0.12)
+		end
+	end,
+	dodge = function(position)
+		Effects.Popup(position + Vector3.new(0, 3, 0), "DODGE!", Color3.fromRGB(120, 230, 255), 34)
+		Effects.Sound("dodge", position)
 	end,
 	block = function(position)
 		Effects.Burst(position, { Color3.fromRGB(90, 200, 255), Color3.new(1, 1, 1) }, 30, 25)
 		Effects.Popup(position + Vector3.new(0, 3, 0), "BLOCKED", Color3.fromRGB(120, 210, 255), 30)
 		Effects.Sound("block", position)
 	end,
-	swing = function(position)
-		Effects.Sound("swing", position)
+	swing = function(position, extra)
+		-- Your own swing already played the moment you pressed BONK
+		local model = extra and extra.model
+		if typeof(model) == "Instance" and model ~= player.Character then
+			Swing.Play(model, Effects.Impact)
+			Effects.Sound("swing", position)
+		end
 	end,
 	dash = function(position)
 		Effects.Burst(position - Vector3.new(0, 2, 0), { Color3.new(1, 1, 1) }, 12, 8, SMOKE, 2)
@@ -223,6 +313,7 @@ function Effects.Init()
 	folder = Instance.new("Folder")
 	folder.Name = "BonkEffects"
 	folder.Parent = Workspace
+	RunService:BindToRenderStep("BonkShake", Enum.RenderPriority.Camera.Value + 1, shakeCamera)
 	Remotes.Effect.OnClientEvent:Connect(function(kind, position, extra)
 		local handler = handlers[kind]
 		if handler and typeof(position) == "Vector3" then

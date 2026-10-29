@@ -6,8 +6,9 @@
 -- moves their character (Roblox lets players move their own character), so the
 -- server tells it how fast to fly with the Launch remote.
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Config = require(Shared.Config)
@@ -61,7 +62,10 @@ function CombatService.Register(model, info)
 		damage = 0,
 		space = nil,
 		lastBonk = 0,
+		bonkReadyAt = 0, -- when the next swing is allowed (a miss pushes it back)
+		aim = nil,
 		lastDash = 0,
+		dodgeUntil = 0,
 		stunUntil = 0,
 		stunToken = 0,
 		frozen = false,
@@ -82,6 +86,9 @@ function CombatService.Register(model, info)
 		byPlayer[info.player] = entity
 	end
 	model:SetAttribute("Damage", 0)
+	-- Players' screens use these to aim (Controls.luau) and draw swings
+	model:SetAttribute("BonkKind", entity.kind)
+	CollectionService:AddTag(model, "Bonkable")
 	model.Destroying:Connect(function()
 		CombatService.Unregister(model)
 	end)
@@ -97,6 +104,13 @@ function CombatService.Unregister(model)
 	if entity.player and byPlayer[entity.player] == entity then
 		byPlayer[entity.player] = nil
 	end
+end
+
+-- Which match an entity fights in (MatchService), or nil. Players' screens
+-- read the Space attribute to know whom they can aim at.
+function CombatService.SetSpace(entity, space)
+	entity.space = space
+	entity.model:SetAttribute("Space", space and space.slot and space.slot.index or nil)
 end
 
 function CombatService.Get(model)
@@ -153,6 +167,9 @@ function CombatService.Reset(entity)
 	CombatService.SetDamage(entity, 0)
 	entity.lastHit = nil
 	entity.stunUntil = 0
+	entity.bonkReadyAt = 0
+	entity.dodgeUntil = 0
+	entity.model:SetAttribute("BonkReadyAt", nil)
 	entity.shield = 0
 	entity.giantUntil = 0
 	entity.speedUntil = 0
@@ -186,7 +203,7 @@ function CombatService.Launch(entity, velocity, stun)
 	local now = os.clock()
 	entity.stunUntil = math.max(entity.stunUntil, now + stun)
 	local spinAxis = flat(velocity).Magnitude > 0.1 and flat(velocity).Unit:Cross(Vector3.yAxis) or Vector3.xAxis
-	local spin = spinAxis * random:NextNumber(4, 9)
+	local spin = spinAxis * random:NextNumber(2, 5)
 	if entity.player then
 		Remotes.Launch:FireClient(entity.player, velocity, stun, spin)
 		return
@@ -230,70 +247,22 @@ function CombatService.Push(entity, velocity, stun, addDamage, by)
 end
 
 ------------------------------------------------------------------ Bonking
--- The right shoulder joint and the axis that lifts the arm forward. Older rigs
--- use a Motor6D (turn its C0); newer ones an AnimationConstraint (turn the
--- shoulder attachment on the torso instead).
-local function shoulder(model)
-	local joint, axis = nil, nil
-	local arm = model:FindFirstChild("RightUpperArm")
-	if arm and arm:FindFirstChild("RightShoulder") then
-		joint, axis = arm.RightShoulder, Vector3.xAxis
-	else
-		local torso = model:FindFirstChild("Torso")
-		if torso and torso:FindFirstChild("Right Shoulder") then
-			joint, axis = torso["Right Shoulder"], Vector3.zAxis
-		end
-	end
-	if not joint then
-		return nil
-	end
-	if joint:IsA("Motor6D") then
-		return joint, "C0", axis
-	elseif joint:IsA("AnimationConstraint") and joint.Attachment0 then
-		return joint.Attachment0, "CFrame", axis
-	end
-	return nil
-end
-
--- Swings the right arm (and the hammer in that hand) up and down
-local function swing(entity)
-	local target, property, axis = shoulder(entity.model)
-	if not target then
-		return
-	end
-	if entity.shoulderTarget ~= target then
-		entity.shoulderTarget = target
-		entity.shoulderBase = target[property]
-	end
-	local base = entity.shoulderBase
-	local function at(degrees)
-		return base * CFrame.fromAxisAngle(axis, math.rad(degrees))
-	end
-	entity.swingToken = (entity.swingToken or 0) + 1
-	local token = entity.swingToken
-	TweenService:Create(target, TweenInfo.new(0.07), { [property] = at(165) }):Play()
-	task.delay(0.07, function()
-		if entity.swingToken ~= token or not target.Parent then
-			return
-		end
-		TweenService:Create(target, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { [property] = at(55) }):Play()
-		task.delay(0.22, function()
-			if entity.swingToken ~= token or not target.Parent then
-				return
-			end
-			TweenService:Create(target, TweenInfo.new(0.2), { [property] = base }):Play()
-		end)
-	end)
-end
+-- The swing itself is drawn on every player's screen (client Swing.luau) when
+-- the server sends the "swing" effect, so it stays smooth for everyone.
 
 -- One landed bonk: adds damage and sends the target flying away from the attacker.
 -- options.power multiplies the push (Giant Hammer).
+-- Returns true for a hit, or false and "block" / "dodge" when it didn't land.
 function CombatService.Hit(attacker, target, options)
 	options = options or {}
 	if not alive(target) or target.frozen then
 		return false
 	end
 	local now = os.clock()
+	if target.dodgeUntil > now then
+		CombatService.Effect("dodge", target.root.Position)
+		return false, "dodge"
+	end
 	local away = flat(target.root.Position - attacker.root.Position)
 	if away.Magnitude < 0.1 then
 		away = flat(attacker.root.CFrame.LookVector)
@@ -311,7 +280,7 @@ function CombatService.Hit(attacker, target, options)
 		CombatService.Effect("block", target.root.Position)
 		-- The shield bounces the attacker back a little
 		CombatService.Launch(attacker, -away * 35 + Vector3.yAxis * 20, 0.3)
-		return false
+		return false, "block"
 	end
 
 	local power = options.power or 1
@@ -327,11 +296,24 @@ function CombatService.Hit(attacker, target, options)
 	local velocity = away * speed * power + Vector3.yAxis * up * math.max(power, 0.7)
 	target.lastHit = { by = attacker, time = now }
 	CombatService.Launch(target, velocity, Config.Stun(target.damage))
-	CombatService.Effect("hit", target.root.Position, { damage = amount, total = math.floor(target.damage), big = power > 1 })
+	CombatService.Effect("hit", target.root.Position, {
+		damage = amount,
+		total = math.floor(target.damage),
+		big = power > 1,
+		target = target.model,
+		by = attacker.model,
+	})
 	for _, listener in ipairs(hitListeners) do
 		task.spawn(listener, attacker, target)
 	end
 	return true
+end
+
+-- A missed swing takes longer to recover, so swinging nonstop doesn't wall
+-- people off. Players' screens read BonkReadyAt to grey out the button.
+local function missed(entity)
+	entity.bonkReadyAt = math.max(entity.bonkReadyAt, entity.lastBonk + Config.BonkMissCooldown)
+	entity.model:SetAttribute("BonkReadyAt", Workspace:GetServerTimeNow() + (entity.bonkReadyAt - os.clock()))
 end
 
 local function resolveBonk(entity)
@@ -348,9 +330,10 @@ local function resolveBonk(entity)
 		CombatService.Effect("shockwave", entity.root.Position, { range = range })
 	end
 	local origin = entity.root.Position
-	local look = flat(entity.root.CFrame.LookVector)
+	local look = entity.aim or flat(entity.root.CFrame.LookVector)
 	look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
 	local minDot = math.cos(math.rad(Config.BonkArc / 2))
+	local contact = false
 	for _, target in ipairs(targetsFor(entity)) do
 		if target ~= entity and alive(target) then
 			local offset = target.root.Position - origin
@@ -358,22 +341,38 @@ local function resolveBonk(entity)
 			local distance = flatOffset.Magnitude
 			if distance <= range and math.abs(offset.Y) <= 6 then
 				if magnet or distance < 2.5 or look:Dot(flatOffset.Unit) >= minDot then
-					CombatService.Hit(entity, target, { power = giant and PowerUps.GiantPower or 1 })
+					local hit, why = CombatService.Hit(entity, target, { power = giant and PowerUps.GiantPower or 1 })
+					if hit or why == "block" then
+						contact = true
+					end
 				end
 			end
 		end
 	end
+	if not contact then
+		missed(entity)
+	end
 end
 
 -- Starts a swing if the entity is allowed to. The hit lands a moment later.
-function CombatService.TryBonk(entity)
+-- aim: the flat direction a player's screen aimed at (see Controls.luau), if any.
+function CombatService.TryBonk(entity, aim)
 	local now = os.clock()
-	if not alive(entity) or entity.frozen or now < entity.stunUntil or now - entity.lastBonk < Config.BonkCooldown then
+	-- A little slack, so a player's swing isn't refused because their click
+	-- reached the server a bit sooner than the one before
+	if not alive(entity) or entity.frozen or now < entity.stunUntil or now - entity.lastBonk < Config.BonkCooldown - 0.08 or now < entity.bonkReadyAt - 0.08 then
 		return false
 	end
 	entity.lastBonk = now
-	swing(entity)
-	CombatService.Effect("swing", entity.root.Position)
+	entity.bonkReadyAt = now + Config.BonkCooldown
+	entity.aim = nil
+	if typeof(aim) == "Vector3" and aim.Magnitude > 0.5 and aim.Magnitude < 1.5 then
+		local level = flat(aim)
+		if level.Magnitude > 0.1 then
+			entity.aim = level.Unit
+		end
+	end
+	CombatService.Effect("swing", entity.root.Position, { model = entity.model })
 	for _, listener in ipairs(bonkListeners) do
 		task.spawn(listener, entity)
 	end
@@ -387,11 +386,12 @@ function CombatService.Dash(entity, direction)
 	if not alive(entity) or entity.frozen or now < entity.stunUntil or now - entity.lastDash < Config.DashCooldown then
 		return false
 	end
-	entity.lastDash = now
 	local dir = flat(direction or entity.root.CFrame.LookVector)
 	if dir.Magnitude < 0.1 then
 		return false
 	end
+	entity.lastDash = now
+	entity.dodgeUntil = now + Config.DodgeSeconds
 	local attachment = Instance.new("Attachment")
 	attachment.Name = "DashAttachment"
 	attachment.Parent = entity.root
@@ -468,17 +468,19 @@ function CombatService.Start()
 		end
 	end)
 
-	Remotes.Bonk.OnServerEvent:Connect(function(player)
+	Remotes.Bonk.OnServerEvent:Connect(function(player, aim)
 		local entity = byPlayer[player]
 		if entity then
-			CombatService.TryBonk(entity)
+			CombatService.TryBonk(entity, aim)
 		end
 	end)
-	-- Players dash on their own computer; show the puff to everyone else
+	-- Players dash on their own computer; bonks miss them for a moment, and
+	-- everyone else sees the puff
 	Remotes.Dash.OnServerEvent:Connect(function(player)
 		local entity = byPlayer[player]
-		if entity and alive(entity) and os.clock() - entity.lastDash >= Config.DashCooldown * 0.8 then
+		if entity and alive(entity) and not entity.frozen and os.clock() - entity.lastDash >= Config.DashCooldown * 0.8 then
 			entity.lastDash = os.clock()
+			entity.dodgeUntil = entity.lastDash + Config.DodgeSeconds
 			CombatService.Effect("dash", entity.root.Position)
 		end
 	end)

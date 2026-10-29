@@ -19,6 +19,9 @@ if game.PrivateServerId ~= "" then
 	game:GetService("ReplicatedStorage"):SetAttribute("PrivateServerOwnerId", game.PrivateServerOwnerId)
 end
 
+-- Phones play sideways only (the player script sets this too)
+game:GetService("StarterGui").ScreenOrientation = Enum.ScreenOrientation.LandscapeSensor
+
 MapBuilder.Build()
 
 -- Services that react to players loading must start before DataService

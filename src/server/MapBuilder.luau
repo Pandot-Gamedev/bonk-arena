@@ -261,7 +261,7 @@ function MapBuilder.Build()
 	board(map, "WinsBoard", CFrame.new(-56, 11, 6) * CFrame.Angles(0, math.rad(-90), 0), Vector3.new(22, 16, 1), "WinsBoard")
 	board(map, "KosBoard", CFrame.new(-50, 11, 34) * CFrame.Angles(0, math.rad(-120), 0), Vector3.new(22, 16, 1), "KosBoard")
 	local howTo = board(map, "HowToBoard", CFrame.new(-22, 8, 52) * CFrame.Angles(0, math.rad(-160), 0), Vector3.new(18, 11, 1), "HowTo")
-	local howToText = "HOW TO PLAY\n\nBonk: click / BONK button\nDash: Q / DASH button\n\nKnock rivals off the arena!\nThe higher their %, the farther they fly.\nWin 2 rounds to win the match."
+	local howToText = "HOW TO PLAY\n\nBonk: click / BONK button\nDash: Q / DASH button\n(a dash dodges bonks)\n\nKnock rivals off the arena!\nThe higher their %, the farther they fly.\nMissed swings are slow, so time them."
 	sign(howTo, howToText, Enum.NormalId.Front, Color3.fromRGB(255, 240, 200), 30)
 	sign(howTo, howToText, Enum.NormalId.Back, Color3.fromRGB(255, 240, 200), 30)
 

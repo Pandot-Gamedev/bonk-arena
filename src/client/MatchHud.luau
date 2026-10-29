@@ -23,6 +23,8 @@ local cardsRow
 local bigLabel, countdownLabel
 local feed
 local bigToken = 0
+local compact = false -- smaller player cards on phones (see SetCompact)
+local lastMatch = nil
 
 local KINDS = {
 	big = { color = Color3.fromRGB(255, 230, 90), size = 70 },
@@ -130,20 +132,21 @@ local function renderCards(match)
 	for _, entry in ipairs(match.players) do
 		local isMe = entry.userId == player.UserId and not entry.bot
 		local card = UI.new("Frame", {
-			Size = UDim2.fromOffset(140, 84),
+			Size = compact and UDim2.fromOffset(112, 72) or UDim2.fromOffset(140, 84),
 			BackgroundColor3 = isMe and Color3.fromRGB(40, 70, 110) or T.Background,
 			BackgroundTransparency = entry.alive and 0.1 or 0.5,
 			Parent = cardsRow,
 		}, { UI.corner(10), UI.padding(6), UI.list(2), isMe and UI.stroke(T.Gold, 2) or nil })
 		UI.label(entry.name, { Size = UDim2.new(1, 0, 0, 18), TextColor3 = entry.bot and T.Muted or T.Text, LayoutOrder = 1, Parent = card })
 		local damage = entry.alive and (entry.damage .. "%") or "OUT"
-		UI.label(damage, { Size = UDim2.new(1, 0, 0, 34), TextColor3 = entry.alive and Format.DamageColor(entry.damage) or T.Bad, TextStrokeTransparency = 0.4, LayoutOrder = 2, Parent = card })
+		UI.label(damage, { Size = UDim2.new(1, 0, 0, compact and 26 or 34), TextColor3 = entry.alive and Format.DamageColor(entry.damage) or T.Bad, TextStrokeTransparency = 0.4, LayoutOrder = 2, Parent = card })
 		dots(card, entry.wins, match.roundsToWin)
 	end
 end
 
 local function render()
 	local match = myMatch() or watchedMatch()
+	lastMatch = match
 	if watching and not watchedMatch() then
 		stopWatching()
 	end
@@ -209,6 +212,21 @@ local function tick()
 		countdownLabel.Visible = false
 		timerLine.Text = (match.winner or "Nobody") .. " wins!"
 		timerLine.TextColor3 = T.Gold
+	end
+end
+
+-- Phones get smaller player cards so they fit between the thumbstick and the
+-- BONK button. init.client.luau calls this whenever the screen size changes.
+function MatchHud.SetCompact(on)
+	if compact == on then
+		return
+	end
+	compact = on
+	if cardsRow then
+		cardsRow.Size = compact and UDim2.fromOffset(480, 72) or UDim2.fromOffset(600, 84)
+		if lastMatch then
+			renderCards(lastMatch)
+		end
 	end
 end
 
@@ -285,7 +303,7 @@ function MatchHud.Init(screenGui)
 		Name = "Cards",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
-		Size = UDim2.fromOffset(600, 84),
+		Size = compact and UDim2.fromOffset(480, 72) or UDim2.fromOffset(600, 84),
 		BackgroundTransparency = 1,
 		Visible = false,
 		Parent = screenGui,

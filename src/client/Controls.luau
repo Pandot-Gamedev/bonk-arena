@@ -1,15 +1,21 @@
 -- Bonk and dash controls, and flying when you get bonked.
 --   Bonk: click, F, R2 on a controller, or the BONK button on phones
 --   Dash: Q, X on a controller, or the DASH button on phones
--- The server decides who gets hit; this script only asks to swing.
+-- Pressing BONK turns you to the closest rival in reach (and lunges you a
+-- little if they are just out of reach), then swings straight away on your
+-- screen. The server still decides who gets hit.
 
+local CollectionService = game:GetService("CollectionService")
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
+
+local Swing = require(script.Parent.Swing)
 
 local Controls = {}
 
@@ -18,7 +24,8 @@ local lastBonk = 0
 local lastDash = 0
 local stunToken = 0
 local stunnedUntil = 0
-local dashing = nil
+local moving = nil -- the dash or lunge pushing you right now
+local turnToken = 0
 
 local function parts()
 	local character = player.Character
@@ -34,21 +41,112 @@ local function flat(vector)
 	return Vector3.new(vector.X, 0, vector.Z)
 end
 
-local function stopDash()
-	if dashing then
-		dashing.mover:Destroy()
-		dashing.attachment:Destroy()
-		dashing = nil
+local function stopMoving()
+	if moving then
+		moving.mover:Destroy()
+		moving.attachment:Destroy()
+		moving = nil
 	end
+end
+
+-- Pushes your character along the ground for a moment (dash and lunge)
+local function push(root, velocity, seconds)
+	stopMoving()
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "DashAttachment"
+	attachment.Parent = root
+	local mover = Instance.new("LinearVelocity")
+	mover.Name = "Dash"
+	mover.Attachment0 = attachment
+	mover.RelativeTo = Enum.ActuatorRelativeTo.World
+	mover.ForceLimitMode = Enum.ForceLimitMode.PerAxis
+	mover.MaxAxesForce = Vector3.new(1e6, 0, 1e6)
+	mover.VectorVelocity = velocity
+	mover.Parent = root
+	local this = { mover = mover, attachment = attachment }
+	moving = this
+	task.delay(seconds, function()
+		if moving == this then
+			stopMoving()
+		end
+	end)
+end
+
+-- The closest rival you could bonk: in a match, the others in your match;
+-- in the lobby, the practice dummies. Rivals you are already facing count as
+-- a little closer.
+local function aimTarget(root)
+	local character = player.Character
+	local mySpace = character:GetAttribute("Space")
+	local look = flat(root.CFrame.LookVector)
+	look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+	local best, bestScore, bestOffset = nil, math.huge, nil
+	for _, model in ipairs(CollectionService:GetTagged("Bonkable")) do
+		local allowed
+		if mySpace ~= nil then
+			allowed = model:GetAttribute("Space") == mySpace
+		else
+			allowed = model:GetAttribute("BonkKind") == "dummy"
+		end
+		local otherRoot = model:FindFirstChild("HumanoidRootPart")
+		local humanoid = model:FindFirstChildOfClass("Humanoid")
+		if allowed and model ~= character and otherRoot and humanoid and humanoid.Health > 0 then
+			local offset = otherRoot.Position - root.Position
+			local distance = flat(offset).Magnitude
+			if distance <= Config.AimRange and math.abs(offset.Y) <= 6 then
+				local facing = distance > 0.1 and look:Dot(flat(offset).Unit) or 1
+				local score = distance - facing * 3
+				if score < bestScore then
+					best, bestScore, bestOffset = model, score, flat(offset)
+				end
+			end
+		end
+	end
+	return best, bestOffset
+end
+
+-- Seconds until the server lets you swing again after a miss
+local function missWait()
+	local character = player.Character
+	local readyAt = character and character:GetAttribute("BonkReadyAt")
+	return readyAt and math.max(0, readyAt - Workspace:GetServerTimeNow()) or 0
 end
 
 function Controls.Bonk()
 	local now = os.clock()
-	if now - lastBonk < Config.BonkCooldown or now < stunnedUntil or not parts() then
+	local root, humanoid = parts()
+	if not root or now - lastBonk < Config.BonkCooldown or now < stunnedUntil or missWait() > 0.05 then
 		return
 	end
+	if humanoid.WalkSpeed <= 0 then
+		return -- frozen for the countdown
+	end
 	lastBonk = now
-	Remotes.Bonk:FireServer()
+
+	local aim = flat(root.CFrame.LookVector)
+	local target, offset = aimTarget(root)
+	if target and offset.Magnitude > 0.1 then
+		aim = offset.Unit
+		-- Face them for the whole swing, even while walking another way
+		root.CFrame = CFrame.lookAt(root.Position, root.Position + aim)
+		humanoid.AutoRotate = false
+		turnToken += 1
+		local token = turnToken
+		task.delay(Swing.ImpactSeconds + 0.1, function()
+			if turnToken == token and humanoid.Parent then
+				humanoid.AutoRotate = true
+			end
+		end)
+		local gap = offset.Magnitude - 3.5
+		if gap > 0.5 then
+			push(root, aim * math.min(gap, Config.LungeDistance) / Config.LungeSeconds, Config.LungeSeconds)
+		end
+	end
+	Swing.Play(player.Character, Controls.OnImpact)
+	if Controls.OnSwing then
+		Controls.OnSwing(root.Position)
+	end
+	Remotes.Bonk:FireServer(aim.Magnitude > 0.1 and aim.Unit or nil)
 end
 
 function Controls.Dash()
@@ -65,32 +163,19 @@ function Controls.Dash()
 		return
 	end
 	lastDash = now
-	stopDash()
-	local attachment = Instance.new("Attachment")
-	attachment.Name = "DashAttachment"
-	attachment.Parent = root
-	local mover = Instance.new("LinearVelocity")
-	mover.Name = "Dash"
-	mover.Attachment0 = attachment
-	mover.RelativeTo = Enum.ActuatorRelativeTo.World
-	mover.ForceLimitMode = Enum.ForceLimitMode.PerAxis
-	mover.MaxAxesForce = Vector3.new(1e6, 0, 1e6)
-	mover.VectorVelocity = direction.Unit * Config.DashSpeed
-	mover.Parent = root
-	local this = { mover = mover, attachment = attachment }
-	dashing = this
-	task.delay(Config.DashSeconds, function()
-		if dashing == this then
-			stopDash()
-		end
-	end)
+	push(root, direction.Unit * Config.DashSpeed, Config.DashSeconds)
 	Remotes.Dash:FireServer()
 end
 
 -- 0 to 1: how ready each move is (for the phone buttons)
 function Controls.Cooldowns()
 	local now = os.clock()
-	return math.clamp((now - lastBonk) / Config.BonkCooldown, 0, 1), math.clamp((now - lastDash) / Config.DashCooldown, 0, 1)
+	local bonk = math.clamp((now - lastBonk) / Config.BonkCooldown, 0, 1)
+	local miss = missWait()
+	if miss > 0 then
+		bonk = math.min(bonk, 1 - miss / Config.BonkMissCooldown)
+	end
+	return math.clamp(bonk, 0, 1), math.clamp((now - lastDash) / Config.DashCooldown, 0, 1)
 end
 
 local function onLaunch(velocity, stun, spin)
@@ -98,7 +183,7 @@ local function onLaunch(velocity, stun, spin)
 	if not root then
 		return
 	end
-	stopDash()
+	stopMoving()
 	stunToken += 1
 	local token = stunToken
 	stunnedUntil = os.clock() + stun
@@ -125,29 +210,26 @@ function Controls.Init()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
 	end)
 
+	-- Keyboard, mouse and controller. Phones get their own big buttons (TouchButtons.luau).
 	ContextActionService:BindAction("BonkArenaBonk", function(_, state)
 		if state == Enum.UserInputState.Begin then
 			Controls.Bonk()
 		end
 		return Enum.ContextActionResult.Pass
-	end, true, Enum.UserInputType.MouseButton1, Enum.KeyCode.F, Enum.KeyCode.ButtonR2)
-	ContextActionService:SetTitle("BonkArenaBonk", "BONK")
-	ContextActionService:SetPosition("BonkArenaBonk", UDim2.new(1, -150, 1, -150))
+	end, false, Enum.UserInputType.MouseButton1, Enum.KeyCode.F, Enum.KeyCode.ButtonR2)
 
 	ContextActionService:BindAction("BonkArenaDash", function(_, state)
 		if state == Enum.UserInputState.Begin then
 			Controls.Dash()
 		end
 		return Enum.ContextActionResult.Sink
-	end, true, Enum.KeyCode.Q, Enum.KeyCode.ButtonX)
-	ContextActionService:SetTitle("BonkArenaDash", "DASH")
-	ContextActionService:SetPosition("BonkArenaDash", UDim2.new(1, -230, 1, -100))
+	end, false, Enum.KeyCode.Q, Enum.KeyCode.ButtonX)
 
 	Remotes.Launch.OnClientEvent:Connect(onLaunch)
 	player.CharacterAdded:Connect(function()
 		stunToken += 1
 		stunnedUntil = 0
-		dashing = nil
+		moving = nil
 	end)
 end
 

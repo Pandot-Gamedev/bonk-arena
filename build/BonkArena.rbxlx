@@ -34,14 +34,21 @@ Config.WalkSpeed = 18
 Config.JumpHeight = 7.2
 Config.DashSpeed = 75
 Config.DashSeconds = 0.18
-Config.DashCooldown = 1.6
+Config.DashCooldown = 1.3
+Config.DodgeSeconds = 0.3 -- bonks miss you for this long after you dash
 
 -- Bonking. Damage is shown as a percentage over each head: the higher it is,
 -- the farther the next bonk sends you (like Smash Bros).
-Config.BonkRange = 7.5 -- studs in front of you
-Config.BonkArc = 110 -- degrees wide
+Config.BonkRange = 8 -- studs in front of you
+Config.BonkArc = 120 -- degrees wide
 Config.BonkCooldown = 0.45
-Config.BonkImpactDelay = 0.12 -- the hammer lands this long after the swing starts
+Config.BonkMissCooldown = 0.9 -- a swing that hits nobody takes longer to recover (no free spamming)
+Config.BonkImpactDelay = 0.17 -- the hammer lands this long after the swing starts (Swing.ImpactSeconds matches it)
+-- Aim help: pressing BONK turns you to the closest rival within AimRange and,
+-- if they are a little out of reach, lunges you up to LungeDistance towards them.
+Config.AimRange = 11
+Config.LungeDistance = 4
+Config.LungeSeconds = 0.12
 Config.BonkDamageMin = 8
 Config.BonkDamageMax = 12
 Config.MaxDamage = 999
@@ -501,7 +508,7 @@ local Tutorial = {}
 
 Tutorial.Steps = {
 	{ event = "BonkDummy", text = "Welcome to Bonk Arena! Bonk a practice dummy: click, or tap the BONK button.", target = "Practice" },
-	{ event = "Dash", text = "Nice hit! Now dash: press Q, or tap the DASH button.", target = "Practice" },
+	{ event = "Dash", text = "Nice hit! Now dash: press Q, or tap DASH. A dash also dodges bonks.", target = "Practice" },
 	{ event = "Queue", text = "Ready to brawl? Step on a glowing pad to join a match.", target = "Pads" },
 	{ event = "Match", text = "Knock everyone off the arena! The higher their %, the farther they fly.", target = nil },
 }
@@ -530,6 +537,9 @@ local WorldService = require(script.WorldService)
 if game.PrivateServerId ~= "" then
 	game:GetService("ReplicatedStorage"):SetAttribute("PrivateServerOwnerId", game.PrivateServerOwnerId)
 end
+
+-- Phones play sideways only (the player script sets this too)
+game:GetService("StarterGui").ScreenOrientation = Enum.ScreenOrientation.LandscapeSensor
 
 MapBuilder.Build()
 
@@ -1510,8 +1520,9 @@ return BotService
 -- moves their character (Roblox lets players move their own character), so the
 -- server tells it how fast to fly with the Launch remote.
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Config = require(Shared.Config)
@@ -1565,7 +1576,10 @@ function CombatService.Register(model, info)
 		damage = 0,
 		space = nil,
 		lastBonk = 0,
+		bonkReadyAt = 0, -- when the next swing is allowed (a miss pushes it back)
+		aim = nil,
 		lastDash = 0,
+		dodgeUntil = 0,
 		stunUntil = 0,
 		stunToken = 0,
 		frozen = false,
@@ -1586,6 +1600,9 @@ function CombatService.Register(model, info)
 		byPlayer[info.player] = entity
 	end
 	model:SetAttribute("Damage", 0)
+	-- Players' screens use these to aim (Controls.luau) and draw swings
+	model:SetAttribute("BonkKind", entity.kind)
+	CollectionService:AddTag(model, "Bonkable")
 	model.Destroying:Connect(function()
 		CombatService.Unregister(model)
 	end)
@@ -1601,6 +1618,13 @@ function CombatService.Unregister(model)
 	if entity.player and byPlayer[entity.player] == entity then
 		byPlayer[entity.player] = nil
 	end
+end
+
+-- Which match an entity fights in (MatchService), or nil. Players' screens
+-- read the Space attribute to know whom they can aim at.
+function CombatService.SetSpace(entity, space)
+	entity.space = space
+	entity.model:SetAttribute("Space", space and space.slot and space.slot.index or nil)
 end
 
 function CombatService.Get(model)
@@ -1657,6 +1681,9 @@ function CombatService.Reset(entity)
 	CombatService.SetDamage(entity, 0)
 	entity.lastHit = nil
 	entity.stunUntil = 0
+	entity.bonkReadyAt = 0
+	entity.dodgeUntil = 0
+	entity.model:SetAttribute("BonkReadyAt", nil)
 	entity.shield = 0
 	entity.giantUntil = 0
 	entity.speedUntil = 0
@@ -1690,7 +1717,7 @@ function CombatService.Launch(entity, velocity, stun)
 	local now = os.clock()
 	entity.stunUntil = math.max(entity.stunUntil, now + stun)
 	local spinAxis = flat(velocity).Magnitude > 0.1 and flat(velocity).Unit:Cross(Vector3.yAxis) or Vector3.xAxis
-	local spin = spinAxis * random:NextNumber(4, 9)
+	local spin = spinAxis * random:NextNumber(2, 5)
 	if entity.player then
 		Remotes.Launch:FireClient(entity.player, velocity, stun, spin)
 		return
@@ -1734,70 +1761,22 @@ function CombatService.Push(entity, velocity, stun, addDamage, by)
 end
 
 ------------------------------------------------------------------ Bonking
--- The right shoulder joint and the axis that lifts the arm forward. Older rigs
--- use a Motor6D (turn its C0); newer ones an AnimationConstraint (turn the
--- shoulder attachment on the torso instead).
-local function shoulder(model)
-	local joint, axis = nil, nil
-	local arm = model:FindFirstChild("RightUpperArm")
-	if arm and arm:FindFirstChild("RightShoulder") then
-		joint, axis = arm.RightShoulder, Vector3.xAxis
-	else
-		local torso = model:FindFirstChild("Torso")
-		if torso and torso:FindFirstChild("Right Shoulder") then
-			joint, axis = torso["Right Shoulder"], Vector3.zAxis
-		end
-	end
-	if not joint then
-		return nil
-	end
-	if joint:IsA("Motor6D") then
-		return joint, "C0", axis
-	elseif joint:IsA("AnimationConstraint") and joint.Attachment0 then
-		return joint.Attachment0, "CFrame", axis
-	end
-	return nil
-end
-
--- Swings the right arm (and the hammer in that hand) up and down
-local function swing(entity)
-	local target, property, axis = shoulder(entity.model)
-	if not target then
-		return
-	end
-	if entity.shoulderTarget ~= target then
-		entity.shoulderTarget = target
-		entity.shoulderBase = target[property]
-	end
-	local base = entity.shoulderBase
-	local function at(degrees)
-		return base * CFrame.fromAxisAngle(axis, math.rad(degrees))
-	end
-	entity.swingToken = (entity.swingToken or 0) + 1
-	local token = entity.swingToken
-	TweenService:Create(target, TweenInfo.new(0.07), { [property] = at(165) }):Play()
-	task.delay(0.07, function()
-		if entity.swingToken ~= token or not target.Parent then
-			return
-		end
-		TweenService:Create(target, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { [property] = at(55) }):Play()
-		task.delay(0.22, function()
-			if entity.swingToken ~= token or not target.Parent then
-				return
-			end
-			TweenService:Create(target, TweenInfo.new(0.2), { [property] = base }):Play()
-		end)
-	end)
-end
+-- The swing itself is drawn on every player's screen (client Swing.luau) when
+-- the server sends the "swing" effect, so it stays smooth for everyone.
 
 -- One landed bonk: adds damage and sends the target flying away from the attacker.
 -- options.power multiplies the push (Giant Hammer).
+-- Returns true for a hit, or false and "block" / "dodge" when it didn't land.
 function CombatService.Hit(attacker, target, options)
 	options = options or {}
 	if not alive(target) or target.frozen then
 		return false
 	end
 	local now = os.clock()
+	if target.dodgeUntil > now then
+		CombatService.Effect("dodge", target.root.Position)
+		return false, "dodge"
+	end
 	local away = flat(target.root.Position - attacker.root.Position)
 	if away.Magnitude < 0.1 then
 		away = flat(attacker.root.CFrame.LookVector)
@@ -1815,7 +1794,7 @@ function CombatService.Hit(attacker, target, options)
 		CombatService.Effect("block", target.root.Position)
 		-- The shield bounces the attacker back a little
 		CombatService.Launch(attacker, -away * 35 + Vector3.yAxis * 20, 0.3)
-		return false
+		return false, "block"
 	end
 
 	local power = options.power or 1
@@ -1831,11 +1810,24 @@ function CombatService.Hit(attacker, target, options)
 	local velocity = away * speed * power + Vector3.yAxis * up * math.max(power, 0.7)
 	target.lastHit = { by = attacker, time = now }
 	CombatService.Launch(target, velocity, Config.Stun(target.damage))
-	CombatService.Effect("hit", target.root.Position, { damage = amount, total = math.floor(target.damage), big = power > 1 })
+	CombatService.Effect("hit", target.root.Position, {
+		damage = amount,
+		total = math.floor(target.damage),
+		big = power > 1,
+		target = target.model,
+		by = attacker.model,
+	})
 	for _, listener in ipairs(hitListeners) do
 		task.spawn(listener, attacker, target)
 	end
 	return true
+end
+
+-- A missed swing takes longer to recover, so swinging nonstop doesn't wall
+-- people off. Players' screens read BonkReadyAt to grey out the button.
+local function missed(entity)
+	entity.bonkReadyAt = math.max(entity.bonkReadyAt, entity.lastBonk + Config.BonkMissCooldown)
+	entity.model:SetAttribute("BonkReadyAt", Workspace:GetServerTimeNow() + (entity.bonkReadyAt - os.clock()))
 end
 
 local function resolveBonk(entity)
@@ -1852,9 +1844,10 @@ local function resolveBonk(entity)
 		CombatService.Effect("shockwave", entity.root.Position, { range = range })
 	end
 	local origin = entity.root.Position
-	local look = flat(entity.root.CFrame.LookVector)
+	local look = entity.aim or flat(entity.root.CFrame.LookVector)
 	look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
 	local minDot = math.cos(math.rad(Config.BonkArc / 2))
+	local contact = false
 	for _, target in ipairs(targetsFor(entity)) do
 		if target ~= entity and alive(target) then
 			local offset = target.root.Position - origin
@@ -1862,22 +1855,38 @@ local function resolveBonk(entity)
 			local distance = flatOffset.Magnitude
 			if distance <= range and math.abs(offset.Y) <= 6 then
 				if magnet or distance < 2.5 or look:Dot(flatOffset.Unit) >= minDot then
-					CombatService.Hit(entity, target, { power = giant and PowerUps.GiantPower or 1 })
+					local hit, why = CombatService.Hit(entity, target, { power = giant and PowerUps.GiantPower or 1 })
+					if hit or why == "block" then
+						contact = true
+					end
 				end
 			end
 		end
 	end
+	if not contact then
+		missed(entity)
+	end
 end
 
 -- Starts a swing if the entity is allowed to. The hit lands a moment later.
-function CombatService.TryBonk(entity)
+-- aim: the flat direction a player's screen aimed at (see Controls.luau), if any.
+function CombatService.TryBonk(entity, aim)
 	local now = os.clock()
-	if not alive(entity) or entity.frozen or now < entity.stunUntil or now - entity.lastBonk < Config.BonkCooldown then
+	-- A little slack, so a player's swing isn't refused because their click
+	-- reached the server a bit sooner than the one before
+	if not alive(entity) or entity.frozen or now < entity.stunUntil or now - entity.lastBonk < Config.BonkCooldown - 0.08 or now < entity.bonkReadyAt - 0.08 then
 		return false
 	end
 	entity.lastBonk = now
-	swing(entity)
-	CombatService.Effect("swing", entity.root.Position)
+	entity.bonkReadyAt = now + Config.BonkCooldown
+	entity.aim = nil
+	if typeof(aim) == "Vector3" and aim.Magnitude > 0.5 and aim.Magnitude < 1.5 then
+		local level = flat(aim)
+		if level.Magnitude > 0.1 then
+			entity.aim = level.Unit
+		end
+	end
+	CombatService.Effect("swing", entity.root.Position, { model = entity.model })
 	for _, listener in ipairs(bonkListeners) do
 		task.spawn(listener, entity)
 	end
@@ -1891,11 +1900,12 @@ function CombatService.Dash(entity, direction)
 	if not alive(entity) or entity.frozen or now < entity.stunUntil or now - entity.lastDash < Config.DashCooldown then
 		return false
 	end
-	entity.lastDash = now
 	local dir = flat(direction or entity.root.CFrame.LookVector)
 	if dir.Magnitude < 0.1 then
 		return false
 	end
+	entity.lastDash = now
+	entity.dodgeUntil = now + Config.DodgeSeconds
 	local attachment = Instance.new("Attachment")
 	attachment.Name = "DashAttachment"
 	attachment.Parent = entity.root
@@ -1972,17 +1982,19 @@ function CombatService.Start()
 		end
 	end)
 
-	Remotes.Bonk.OnServerEvent:Connect(function(player)
+	Remotes.Bonk.OnServerEvent:Connect(function(player, aim)
 		local entity = byPlayer[player]
 		if entity then
-			CombatService.TryBonk(entity)
+			CombatService.TryBonk(entity, aim)
 		end
 	end)
-	-- Players dash on their own computer; show the puff to everyone else
+	-- Players dash on their own computer; bonks miss them for a moment, and
+	-- everyone else sees the puff
 	Remotes.Dash.OnServerEvent:Connect(function(player)
 		local entity = byPlayer[player]
-		if entity and alive(entity) and os.clock() - entity.lastDash >= Config.DashCooldown * 0.8 then
+		if entity and alive(entity) and not entity.frozen and os.clock() - entity.lastDash >= Config.DashCooldown * 0.8 then
 			entity.lastDash = os.clock()
+			entity.dodgeUntil = entity.lastDash + Config.DodgeSeconds
 			CombatService.Effect("dash", entity.root.Position)
 		end
 	end)
@@ -2950,7 +2962,7 @@ function MapBuilder.Build()
 	board(map, "WinsBoard", CFrame.new(-56, 11, 6) * CFrame.Angles(0, math.rad(-90), 0), Vector3.new(22, 16, 1), "WinsBoard")
 	board(map, "KosBoard", CFrame.new(-50, 11, 34) * CFrame.Angles(0, math.rad(-120), 0), Vector3.new(22, 16, 1), "KosBoard")
 	local howTo = board(map, "HowToBoard", CFrame.new(-22, 8, 52) * CFrame.Angles(0, math.rad(-160), 0), Vector3.new(18, 11, 1), "HowTo")
-	local howToText = "HOW TO PLAY\n\nBonk: click / BONK button\nDash: Q / DASH button\n\nKnock rivals off the arena!\nThe higher their %, the farther they fly.\nWin 2 rounds to win the match."
+	local howToText = "HOW TO PLAY\n\nBonk: click / BONK button\nDash: Q / DASH button\n(a dash dodges bonks)\n\nKnock rivals off the arena!\nThe higher their %, the farther they fly.\nMissed swings are slow, so time them."
 	sign(howTo, howToText, Enum.NormalId.Front, Color3.fromRGB(255, 240, 200), 30)
 	sign(howTo, howToText, Enum.NormalId.Back, Color3.fromRGB(255, 240, 200), 30)
 
@@ -3170,7 +3182,7 @@ local function toDeck(match, entity)
 	if not entity or not entity.root or not entity.root.Parent then
 		return
 	end
-	entity.space = nil
+	CombatService.SetSpace(entity, nil)
 	CombatService.Reset(entity) -- no giant hammer or shield on the deck
 	entity.model:SetAttribute("ShowDamage", false)
 	CombatService.Freeze(entity, false)
@@ -3260,7 +3272,7 @@ local function placeForRound(match)
 		if entity and CombatService.IsAlive(entity) then
 			local spawnCFrame = arena.spawns[((index - 1) % #arena.spawns) + 1]
 			CombatService.Reset(entity)
-			entity.space = match
+			CombatService.SetSpace(entity, match)
 			entity.model:SetAttribute("ShowDamage", true)
 			if participant.player then
 				entity.model:PivotTo(spawnCFrame)
@@ -3357,7 +3369,7 @@ local function endMatch(match)
 		elseif participant.player and participant.player.Parent then
 			local entity = CombatService.GetByPlayer(participant.player)
 			if entity then
-				entity.space = nil
+				CombatService.SetSpace(entity, nil)
 				CombatService.Reset(entity)
 				entity.model:SetAttribute("ShowDamage", false)
 				if entity.root and entity.root.Anchored then
@@ -3519,7 +3531,7 @@ local function runVictory(match, winner)
 	end
 	local winnerEntity = winner and match:Entity(winner)
 	if winnerEntity and winnerEntity.root and winnerEntity.root.Parent then
-		winnerEntity.space = nil
+		CombatService.SetSpace(winnerEntity, nil)
 		CombatService.Freeze(winnerEntity, false)
 		winnerEntity.model:SetAttribute("ShowDamage", false)
 		local stand = slot.podium * CFrame.new(0, 3, 0)
@@ -4750,9 +4762,10 @@ function WorldService.Start()
 end
 
 return WorldService
-]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000026"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000025"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="LocalScript" referent="RBX00000024"><Properties><string name="Name">Client</string><ProtectedString name="Source"><![CDATA[-- Bonk Arena player script. Builds the screen and starts the controls.
+]]></ProtectedString></Properties></Item></Item></Item><Item class="StarterPlayer" referent="RBX00000028"><Properties><string name="Name">StarterPlayer</string></Properties><Item class="StarterPlayerScripts" referent="RBX00000027"><Properties><string name="Name">StarterPlayerScripts</string></Properties><Item class="LocalScript" referent="RBX00000026"><Properties><string name="Name">Client</string><ProtectedString name="Source"><![CDATA[-- Bonk Arena player script. Builds the screen and starts the controls.
 
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local UI = require(script.UI)
@@ -4763,23 +4776,34 @@ local Panels = require(script.Panels)
 local MatchHud = require(script.MatchHud)
 local Hud = require(script.Hud)
 local Guide = require(script.Guide)
+local TouchButtons = require(script.TouchButtons)
 
 local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Phones play sideways only (either way round)
+playerGui.ScreenOrientation = Enum.ScreenOrientation.LandscapeSensor
 
 local screenGui = UI.new("ScreenGui", {
 	Name = "BonkArenaUI",
 	ResetOnSpawn = false,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-	Parent = player:WaitForChild("PlayerGui"),
+	Parent = playerGui,
 })
 
--- Shrink the whole UI on small screens (phones)
+-- Shrink the whole UI on small screens. Touch screens shrink less, so the
+-- buttons stay big enough for fingers, and switch to a compact match screen.
 local scale = UI.new("UIScale", { Parent = screenGui })
 local function rescale()
 	local camera = Workspace.CurrentCamera
 	if camera then
 		local size = camera.ViewportSize
-		scale.Scale = math.clamp(math.min(size.X / 1100, size.Y / 700), 0.55, 1.2)
+		if UserInputService.TouchEnabled then
+			scale.Scale = math.clamp(math.min(size.X / 950, size.Y / 600), 0.62, 1.2)
+		else
+			scale.Scale = math.clamp(math.min(size.X / 1100, size.Y / 700), 0.55, 1.2)
+		end
+		MatchHud.SetCompact(UserInputService.TouchEnabled and size.Y < 700)
 	end
 end
 while not Workspace.CurrentCamera do
@@ -4790,6 +4814,11 @@ rescale()
 
 Notifications.Init(screenGui)
 Controls.Init()
+Controls.OnImpact = Effects.Impact
+Controls.OnSwing = function(position)
+	Effects.Sound("swing", position)
+end
+TouchButtons.Init()
 Effects.Init()
 Panels.Init(screenGui)
 MatchHud.Init(screenGui)
@@ -4798,15 +4827,21 @@ Guide.Init(screenGui)
 ]]></ProtectedString></Properties><Item class="ModuleScript" referent="RBX0000001B"><Properties><string name="Name">Controls</string><ProtectedString name="Source"><![CDATA[-- Bonk and dash controls, and flying when you get bonked.
 --   Bonk: click, F, R2 on a controller, or the BONK button on phones
 --   Dash: Q, X on a controller, or the DASH button on phones
--- The server decides who gets hit; this script only asks to swing.
+-- Pressing BONK turns you to the closest rival in reach (and lunges you a
+-- little if they are just out of reach), then swings straight away on your
+-- screen. The server still decides who gets hit.
 
+local CollectionService = game:GetService("CollectionService")
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
+
+local Swing = require(script.Parent.Swing)
 
 local Controls = {}
 
@@ -4815,7 +4850,8 @@ local lastBonk = 0
 local lastDash = 0
 local stunToken = 0
 local stunnedUntil = 0
-local dashing = nil
+local moving = nil -- the dash or lunge pushing you right now
+local turnToken = 0
 
 local function parts()
 	local character = player.Character
@@ -4831,21 +4867,112 @@ local function flat(vector)
 	return Vector3.new(vector.X, 0, vector.Z)
 end
 
-local function stopDash()
-	if dashing then
-		dashing.mover:Destroy()
-		dashing.attachment:Destroy()
-		dashing = nil
+local function stopMoving()
+	if moving then
+		moving.mover:Destroy()
+		moving.attachment:Destroy()
+		moving = nil
 	end
+end
+
+-- Pushes your character along the ground for a moment (dash and lunge)
+local function push(root, velocity, seconds)
+	stopMoving()
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "DashAttachment"
+	attachment.Parent = root
+	local mover = Instance.new("LinearVelocity")
+	mover.Name = "Dash"
+	mover.Attachment0 = attachment
+	mover.RelativeTo = Enum.ActuatorRelativeTo.World
+	mover.ForceLimitMode = Enum.ForceLimitMode.PerAxis
+	mover.MaxAxesForce = Vector3.new(1e6, 0, 1e6)
+	mover.VectorVelocity = velocity
+	mover.Parent = root
+	local this = { mover = mover, attachment = attachment }
+	moving = this
+	task.delay(seconds, function()
+		if moving == this then
+			stopMoving()
+		end
+	end)
+end
+
+-- The closest rival you could bonk: in a match, the others in your match;
+-- in the lobby, the practice dummies. Rivals you are already facing count as
+-- a little closer.
+local function aimTarget(root)
+	local character = player.Character
+	local mySpace = character:GetAttribute("Space")
+	local look = flat(root.CFrame.LookVector)
+	look = look.Magnitude > 0.1 and look.Unit or Vector3.new(0, 0, -1)
+	local best, bestScore, bestOffset = nil, math.huge, nil
+	for _, model in ipairs(CollectionService:GetTagged("Bonkable")) do
+		local allowed
+		if mySpace ~= nil then
+			allowed = model:GetAttribute("Space") == mySpace
+		else
+			allowed = model:GetAttribute("BonkKind") == "dummy"
+		end
+		local otherRoot = model:FindFirstChild("HumanoidRootPart")
+		local humanoid = model:FindFirstChildOfClass("Humanoid")
+		if allowed and model ~= character and otherRoot and humanoid and humanoid.Health > 0 then
+			local offset = otherRoot.Position - root.Position
+			local distance = flat(offset).Magnitude
+			if distance <= Config.AimRange and math.abs(offset.Y) <= 6 then
+				local facing = distance > 0.1 and look:Dot(flat(offset).Unit) or 1
+				local score = distance - facing * 3
+				if score < bestScore then
+					best, bestScore, bestOffset = model, score, flat(offset)
+				end
+			end
+		end
+	end
+	return best, bestOffset
+end
+
+-- Seconds until the server lets you swing again after a miss
+local function missWait()
+	local character = player.Character
+	local readyAt = character and character:GetAttribute("BonkReadyAt")
+	return readyAt and math.max(0, readyAt - Workspace:GetServerTimeNow()) or 0
 end
 
 function Controls.Bonk()
 	local now = os.clock()
-	if now - lastBonk < Config.BonkCooldown or now < stunnedUntil or not parts() then
+	local root, humanoid = parts()
+	if not root or now - lastBonk < Config.BonkCooldown or now < stunnedUntil or missWait() > 0.05 then
 		return
 	end
+	if humanoid.WalkSpeed <= 0 then
+		return -- frozen for the countdown
+	end
 	lastBonk = now
-	Remotes.Bonk:FireServer()
+
+	local aim = flat(root.CFrame.LookVector)
+	local target, offset = aimTarget(root)
+	if target and offset.Magnitude > 0.1 then
+		aim = offset.Unit
+		-- Face them for the whole swing, even while walking another way
+		root.CFrame = CFrame.lookAt(root.Position, root.Position + aim)
+		humanoid.AutoRotate = false
+		turnToken += 1
+		local token = turnToken
+		task.delay(Swing.ImpactSeconds + 0.1, function()
+			if turnToken == token and humanoid.Parent then
+				humanoid.AutoRotate = true
+			end
+		end)
+		local gap = offset.Magnitude - 3.5
+		if gap > 0.5 then
+			push(root, aim * math.min(gap, Config.LungeDistance) / Config.LungeSeconds, Config.LungeSeconds)
+		end
+	end
+	Swing.Play(player.Character, Controls.OnImpact)
+	if Controls.OnSwing then
+		Controls.OnSwing(root.Position)
+	end
+	Remotes.Bonk:FireServer(aim.Magnitude > 0.1 and aim.Unit or nil)
 end
 
 function Controls.Dash()
@@ -4862,32 +4989,19 @@ function Controls.Dash()
 		return
 	end
 	lastDash = now
-	stopDash()
-	local attachment = Instance.new("Attachment")
-	attachment.Name = "DashAttachment"
-	attachment.Parent = root
-	local mover = Instance.new("LinearVelocity")
-	mover.Name = "Dash"
-	mover.Attachment0 = attachment
-	mover.RelativeTo = Enum.ActuatorRelativeTo.World
-	mover.ForceLimitMode = Enum.ForceLimitMode.PerAxis
-	mover.MaxAxesForce = Vector3.new(1e6, 0, 1e6)
-	mover.VectorVelocity = direction.Unit * Config.DashSpeed
-	mover.Parent = root
-	local this = { mover = mover, attachment = attachment }
-	dashing = this
-	task.delay(Config.DashSeconds, function()
-		if dashing == this then
-			stopDash()
-		end
-	end)
+	push(root, direction.Unit * Config.DashSpeed, Config.DashSeconds)
 	Remotes.Dash:FireServer()
 end
 
 -- 0 to 1: how ready each move is (for the phone buttons)
 function Controls.Cooldowns()
 	local now = os.clock()
-	return math.clamp((now - lastBonk) / Config.BonkCooldown, 0, 1), math.clamp((now - lastDash) / Config.DashCooldown, 0, 1)
+	local bonk = math.clamp((now - lastBonk) / Config.BonkCooldown, 0, 1)
+	local miss = missWait()
+	if miss > 0 then
+		bonk = math.min(bonk, 1 - miss / Config.BonkMissCooldown)
+	end
+	return math.clamp(bonk, 0, 1), math.clamp((now - lastDash) / Config.DashCooldown, 0, 1)
 end
 
 local function onLaunch(velocity, stun, spin)
@@ -4895,7 +5009,7 @@ local function onLaunch(velocity, stun, spin)
 	if not root then
 		return
 	end
-	stopDash()
+	stopMoving()
 	stunToken += 1
 	local token = stunToken
 	stunnedUntil = os.clock() + stun
@@ -4922,37 +5036,38 @@ function Controls.Init()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
 	end)
 
+	-- Keyboard, mouse and controller. Phones get their own big buttons (TouchButtons.luau).
 	ContextActionService:BindAction("BonkArenaBonk", function(_, state)
 		if state == Enum.UserInputState.Begin then
 			Controls.Bonk()
 		end
 		return Enum.ContextActionResult.Pass
-	end, true, Enum.UserInputType.MouseButton1, Enum.KeyCode.F, Enum.KeyCode.ButtonR2)
-	ContextActionService:SetTitle("BonkArenaBonk", "BONK")
-	ContextActionService:SetPosition("BonkArenaBonk", UDim2.new(1, -150, 1, -150))
+	end, false, Enum.UserInputType.MouseButton1, Enum.KeyCode.F, Enum.KeyCode.ButtonR2)
 
 	ContextActionService:BindAction("BonkArenaDash", function(_, state)
 		if state == Enum.UserInputState.Begin then
 			Controls.Dash()
 		end
 		return Enum.ContextActionResult.Sink
-	end, true, Enum.KeyCode.Q, Enum.KeyCode.ButtonX)
-	ContextActionService:SetTitle("BonkArenaDash", "DASH")
-	ContextActionService:SetPosition("BonkArenaDash", UDim2.new(1, -230, 1, -100))
+	end, false, Enum.KeyCode.Q, Enum.KeyCode.ButtonX)
 
 	Remotes.Launch.OnClientEvent:Connect(onLaunch)
 	player.CharacterAdded:Connect(function()
 		stunToken += 1
 		stunnedUntil = 0
-		dashing = nil
+		moving = nil
 	end)
 end
 
 return Controls
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001C"><Properties><string name="Name">Effects</string><ProtectedString name="Source"><![CDATA[-- Hit sparks, damage numbers, knockout effects and sounds. The server says what
--- happened and where (the Effect remote); every player draws it on their own screen.
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX0000001C"><Properties><string name="Name">Effects</string><ProtectedString name="Source"><![CDATA[-- Hit sparks, damage numbers, knockout effects, screen shake and sounds. The
+-- server says what happened and where (the Effect remote); every player draws
+-- it on their own screen.
 
+local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
@@ -4961,13 +5076,20 @@ local Cosmetics = require(Shared.Cosmetics)
 local PowerUps = require(Shared.PowerUps)
 local Remotes = require(Shared.Remotes)
 
+local Swing = require(script.Parent.Swing)
+
 local Effects = {}
+
+local player = Players.LocalPlayer
 
 local SPARKLE = "rbxasset://textures/particles/sparkles_main.dds"
 local SMOKE = "rbxasset://textures/particles/smoke_main.dds"
+-- { sound, volume, pitch, random pitch +/- }
 local SOUNDS = {
-	bonk = { "rbxasset://sounds/collide.wav", 0.8 },
-	swing = { "rbxasset://sounds/swordslash.wav", 0.25 },
+	bonk = { "rbxasset://sounds/collide.wav", 0.9, 1, 0.12 },
+	thump = { "rbxasset://sounds/collide.wav", 0.35, 0.6, 0.08 },
+	swing = { "rbxasset://sounds/swordslash.wav", 0.3, 1.1, 0.1 },
+	dodge = { "rbxasset://sounds/swordlunge.wav", 0.4, 1.4 },
 	dash = { "rbxasset://sounds/swordlunge.wav", 0.3 },
 	ko = { "rbxasset://sounds/uuhhh.mp3", 0.6 },
 	block = { "rbxasset://sounds/electronicpingshort.wav", 0.5 },
@@ -4999,6 +5121,7 @@ function Effects.Sound(name, position)
 	local sound = Instance.new("Sound")
 	sound.SoundId = info[1]
 	sound.Volume = info[2]
+	sound.PlaybackSpeed = (info[3] or 1) + (info[4] and (math.random() * 2 - 1) * info[4] or 0)
 	sound.RollOffMaxDistance = 200
 	sound.Parent = holder
 	sound:Play()
@@ -5071,6 +5194,61 @@ local function ring(position, color, radius)
 	Debris:AddItem(p, 0.4)
 end
 
+-- Shakes your camera a little (when you land a bonk or get bonked)
+local shakeUntil, shakeSeconds, shakeStrength = 0, 1, 0
+function Effects.Shake(strength, seconds)
+	local now = os.clock()
+	local left = now < shakeUntil and shakeStrength * (shakeUntil - now) / shakeSeconds or 0
+	if strength >= left then
+		shakeStrength, shakeSeconds, shakeUntil = strength, seconds, now + seconds
+	end
+end
+
+local function shakeCamera()
+	local now = os.clock()
+	if now >= shakeUntil then
+		return
+	end
+	local camera = Workspace.CurrentCamera
+	local s = shakeStrength * (shakeUntil - now) / shakeSeconds
+	-- Only move sideways and roll, so the camera's own aiming is never thrown off
+	camera.CFrame = camera.CFrame * CFrame.new((math.random() * 2 - 1) * s, (math.random() * 2 - 1) * s, 0) * CFrame.Angles(0, 0, (math.random() * 2 - 1) * s * 0.03)
+end
+
+-- A white flash over a character that just got bonked
+local function flash(model)
+	if typeof(model) ~= "Instance" or not model.Parent then
+		return
+	end
+	local highlight = Instance.new("Highlight")
+	highlight.FillColor = Color3.new(1, 1, 1)
+	highlight.FillTransparency = 0.15
+	highlight.OutlineTransparency = 1
+	highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+	highlight.Adornee = model
+	highlight.Parent = folder
+	TweenService:Create(highlight, TweenInfo.new(0.22), { FillTransparency = 1 }):Play()
+	Debris:AddItem(highlight, 0.25)
+end
+
+-- Dust and a thump where a hammer hits the ground
+local groundParams = RaycastParams.new()
+groundParams.FilterType = Enum.RaycastFilterType.Exclude
+function Effects.Impact(model, position)
+	local ignore = CollectionService:GetTagged("Bonkable")
+	table.insert(ignore, folder)
+	table.insert(ignore, model)
+	groundParams.FilterDescendantsInstances = ignore
+	local hit = Workspace:Raycast(position + Vector3.new(0, 2, 0), Vector3.new(0, -7, 0), groundParams)
+	local at = hit and hit.Position or position
+	ring(at + Vector3.new(0, 0.15, 0), Color3.fromRGB(255, 245, 225), 3)
+	Effects.Burst(at, { Color3.fromRGB(240, 230, 210) }, 8, 10, SMOKE, 1.4)
+	Effects.Sound("thump", at)
+	if model == player.Character then
+		Effects.Shake(0.08, 0.1)
+	end
+end
+
 local function lightning(position, colors)
 	local top = position + Vector3.new(0, 40, 0)
 	local previous = top
@@ -5126,19 +5304,42 @@ function Effects.Knockout(position, effectId)
 	Effects.Sound("ko", position)
 end
 
+local BIG_WORDS = { "BONK!", "WHAM!", "POW!", "BOING!" }
+
 local handlers = {
 	hit = function(position, extra)
-		Effects.Burst(position, { Color3.fromRGB(255, 240, 150), Color3.fromRGB(255, 150, 60) }, extra and extra.big and 40 or 20, 30)
-		Effects.Popup(position + Vector3.new(0, 3, 0), "+" .. (extra and extra.damage or 0) .. "%", Color3.fromRGB(255, 220, 80), 34)
+		extra = extra or {}
+		local total = extra.total or 0
+		Effects.Burst(position, { Color3.fromRGB(255, 240, 150), Color3.fromRGB(255, 150, 60) }, extra.big and 45 or 25, 32)
+		Effects.Popup(position + Vector3.new(0, 3, 0), "+" .. (extra.damage or 0) .. "%", Color3.fromRGB(255, 220, 80), 34)
+		if extra.big or total >= 80 then
+			Effects.Popup(position + Vector3.new(0, 5, 0), BIG_WORDS[math.random(#BIG_WORDS)], Color3.fromRGB(255, 120, 60), 56, 0.8)
+		end
 		Effects.Sound("bonk", position)
+		flash(extra.target)
+		local character = player.Character
+		if character and extra.target == character then
+			Effects.Shake(0.25 + math.min(total, 150) / 500, 0.25)
+		elseif character and extra.by == character then
+			Effects.Shake(0.18, 0.12)
+		end
+	end,
+	dodge = function(position)
+		Effects.Popup(position + Vector3.new(0, 3, 0), "DODGE!", Color3.fromRGB(120, 230, 255), 34)
+		Effects.Sound("dodge", position)
 	end,
 	block = function(position)
 		Effects.Burst(position, { Color3.fromRGB(90, 200, 255), Color3.new(1, 1, 1) }, 30, 25)
 		Effects.Popup(position + Vector3.new(0, 3, 0), "BLOCKED", Color3.fromRGB(120, 210, 255), 30)
 		Effects.Sound("block", position)
 	end,
-	swing = function(position)
-		Effects.Sound("swing", position)
+	swing = function(position, extra)
+		-- Your own swing already played the moment you pressed BONK
+		local model = extra and extra.model
+		if typeof(model) == "Instance" and model ~= player.Character then
+			Swing.Play(model, Effects.Impact)
+			Effects.Sound("swing", position)
+		end
 	end,
 	dash = function(position)
 		Effects.Burst(position - Vector3.new(0, 2, 0), { Color3.new(1, 1, 1) }, 12, 8, SMOKE, 2)
@@ -5174,6 +5375,7 @@ function Effects.Init()
 	folder = Instance.new("Folder")
 	folder.Name = "BonkEffects"
 	folder.Parent = Workspace
+	RunService:BindToRenderStep("BonkShake", Enum.RenderPriority.Camera.Value + 1, shakeCamera)
 	Remotes.Effect.OnClientEvent:Connect(function(kind, position, extra)
 		local handler = handlers[kind]
 		if handler and typeof(position) == "Vector3" then
@@ -5474,6 +5676,8 @@ local cardsRow
 local bigLabel, countdownLabel
 local feed
 local bigToken = 0
+local compact = false -- smaller player cards on phones (see SetCompact)
+local lastMatch = nil
 
 local KINDS = {
 	big = { color = Color3.fromRGB(255, 230, 90), size = 70 },
@@ -5581,20 +5785,21 @@ local function renderCards(match)
 	for _, entry in ipairs(match.players) do
 		local isMe = entry.userId == player.UserId and not entry.bot
 		local card = UI.new("Frame", {
-			Size = UDim2.fromOffset(140, 84),
+			Size = compact and UDim2.fromOffset(112, 72) or UDim2.fromOffset(140, 84),
 			BackgroundColor3 = isMe and Color3.fromRGB(40, 70, 110) or T.Background,
 			BackgroundTransparency = entry.alive and 0.1 or 0.5,
 			Parent = cardsRow,
 		}, { UI.corner(10), UI.padding(6), UI.list(2), isMe and UI.stroke(T.Gold, 2) or nil })
 		UI.label(entry.name, { Size = UDim2.new(1, 0, 0, 18), TextColor3 = entry.bot and T.Muted or T.Text, LayoutOrder = 1, Parent = card })
 		local damage = entry.alive and (entry.damage .. "%") or "OUT"
-		UI.label(damage, { Size = UDim2.new(1, 0, 0, 34), TextColor3 = entry.alive and Format.DamageColor(entry.damage) or T.Bad, TextStrokeTransparency = 0.4, LayoutOrder = 2, Parent = card })
+		UI.label(damage, { Size = UDim2.new(1, 0, 0, compact and 26 or 34), TextColor3 = entry.alive and Format.DamageColor(entry.damage) or T.Bad, TextStrokeTransparency = 0.4, LayoutOrder = 2, Parent = card })
 		dots(card, entry.wins, match.roundsToWin)
 	end
 end
 
 local function render()
 	local match = myMatch() or watchedMatch()
+	lastMatch = match
 	if watching and not watchedMatch() then
 		stopWatching()
 	end
@@ -5660,6 +5865,21 @@ local function tick()
 		countdownLabel.Visible = false
 		timerLine.Text = (match.winner or "Nobody") .. " wins!"
 		timerLine.TextColor3 = T.Gold
+	end
+end
+
+-- Phones get smaller player cards so they fit between the thumbstick and the
+-- BONK button. init.client.luau calls this whenever the screen size changes.
+function MatchHud.SetCompact(on)
+	if compact == on then
+		return
+	end
+	compact = on
+	if cardsRow then
+		cardsRow.Size = compact and UDim2.fromOffset(480, 72) or UDim2.fromOffset(600, 84)
+		if lastMatch then
+			renderCards(lastMatch)
+		end
 	end
 end
 
@@ -5736,7 +5956,7 @@ function MatchHud.Init(screenGui)
 		Name = "Cards",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
-		Size = UDim2.fromOffset(600, 84),
+		Size = compact and UDim2.fromOffset(480, 72) or UDim2.fromOffset(600, 84),
 		BackgroundTransparency = 1,
 		Visible = false,
 		Parent = screenGui,
@@ -6199,7 +6419,379 @@ function State.Action(actionName, argument)
 end
 
 return State
-]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000023"><Properties><string name="Name">UI</string><ProtectedString name="Source"><![CDATA[-- Helpers for building the on-screen menus in code, so nothing has to be
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000023"><Properties><string name="Name">Swing</string><ProtectedString name="Source"><![CDATA[-- The hammer swing, drawn on every player's own screen so it stays smooth:
+-- the arm winds up over the head, slams the hammer down in front with a lean,
+-- holds for a moment, then springs back. Your own swing starts the moment you
+-- press BONK (Controls.luau); everyone else's starts when the server says they
+-- swung (the "swing" effect in Effects.luau).
+
+local RunService = game:GetService("RunService")
+
+local Swing = {}
+
+-- Joint angles in degrees at each moment of the swing:
+-- { seconds, shoulder, wrist, waist, easing into this pose }
+-- Shoulder: + lifts the arm forward and up. Wrist: - tips the hammer down so it
+-- carries on the line of the arm. Waist: + leans back, - leans forward.
+local POSES = {
+	{ 0, 0, 0, 0 },
+	{ 0.1, 170, 25, 12, "out" },
+	{ 0.17, 50, -90, -22, "in" },
+	{ 0.24, 50, -90, -22 },
+	{ 0.46, 0, 0, 0, "back" },
+}
+-- Old blocky avatars (R6) have no wrist or waist, so the arm goes further down
+local POSES_R6 = {
+	{ 0, 0, 0, 0 },
+	{ 0.1, 170, 0, 0, "out" },
+	{ 0.17, -25, 0, 0, "in" },
+	{ 0.24, -25, 0, 0 },
+	{ 0.46, 0, 0, 0, "back" },
+}
+Swing.ImpactSeconds = 0.17 -- when the hammer hits the ground (Config.BonkImpactDelay matches it)
+Swing.Seconds = 0.46
+
+local bases = setmetatable({}, { __mode = "k" }) -- [joint target] = its resting CFrame
+local active = {} -- [model] = the swing playing on it
+local stepping = nil
+
+local function ease(style, a)
+	if style == "out" then
+		return 1 - (1 - a) ^ 2
+	elseif style == "in" then
+		return a ^ 3
+	elseif style == "back" then
+		local c1 = 1.70158
+		return 1 + (c1 + 1) * (a - 1) ^ 3 + c1 * (a - 1) ^ 2
+	end
+	return a
+end
+
+-- A joint to turn. Older rigs use a Motor6D (turn its C0); newer ones an
+-- AnimationConstraint (turn the attachment on the parent part instead).
+local function joint(part, name, axis)
+	local found = part and part:FindFirstChild(name)
+	if not found then
+		return nil
+	end
+	local target, property
+	if found:IsA("Motor6D") then
+		target, property = found, "C0"
+	elseif found:IsA("AnimationConstraint") and found.Attachment0 then
+		target, property = found.Attachment0, "CFrame"
+	else
+		return nil
+	end
+	if not bases[target] then
+		bases[target] = target[property]
+	end
+	return { target = target, property = property, axis = axis }
+end
+
+local function rig(model)
+	local upperArm = model:FindFirstChild("RightUpperArm")
+	if upperArm then
+		return {
+			poses = POSES,
+			shoulder = joint(upperArm, "RightShoulder", Vector3.xAxis),
+			wrist = joint(model:FindFirstChild("RightHand"), "RightWrist", Vector3.xAxis),
+			waist = joint(model:FindFirstChild("UpperTorso"), "Waist", Vector3.xAxis),
+		}
+	end
+	return { poses = POSES_R6, shoulder = joint(model:FindFirstChild("Torso"), "Right Shoulder", Vector3.zAxis) }
+end
+
+local function turn(j, degrees)
+	if j and j.target.Parent then
+		j.target[j.property] = bases[j.target] * CFrame.fromAxisAngle(j.axis, math.rad(degrees))
+	end
+end
+
+local function pose(swing, t)
+	local poses = swing.rig.poses
+	local from, to = poses[1], poses[#poses]
+	for index = 2, #poses do
+		if t <= poses[index][1] then
+			from, to = poses[index - 1], poses[index]
+			break
+		end
+	end
+	local span = to[1] - from[1]
+	local a = span > 0 and ease(to[5], math.clamp((t - from[1]) / span, 0, 1)) or 1
+	turn(swing.rig.shoulder, from[2] + (to[2] - from[2]) * a)
+	turn(swing.rig.wrist, from[3] + (to[3] - from[3]) * a)
+	turn(swing.rig.waist, from[4] + (to[4] - from[4]) * a)
+end
+
+-- A short streak behind the hammer head while it moves
+local function trail(model)
+	local hammer = model:FindFirstChild("BonkHammer")
+	local head = hammer and hammer:FindFirstChild("Head")
+	local hand = model:FindFirstChild("RightHand") or model:FindFirstChild("Right Arm")
+	if not head or not hand then
+		return nil
+	end
+	local existing = head:FindFirstChild("SwingTrail")
+	if existing then
+		return existing
+	end
+	-- The streak runs across the hammer's path, so put its two edges on either side of the head
+	local half = head.CFrame:VectorToObjectSpace(hand.CFrame.RightVector) * math.max(head.Size.Y, head.Size.Z) * 0.5
+	local a0 = Instance.new("Attachment")
+	a0.Position = half
+	a0.Parent = head
+	local a1 = Instance.new("Attachment")
+	a1.Position = -half
+	a1.Parent = head
+	local streak = Instance.new("Trail")
+	streak.Name = "SwingTrail"
+	streak.Attachment0 = a0
+	streak.Attachment1 = a1
+	streak.Lifetime = 0.16
+	streak.MinLength = 0.05
+	streak.LightEmission = 0.6
+	streak.Color = ColorSequence.new(Color3.new(1, 1, 1), head.Color)
+	streak.Transparency = NumberSequence.new(0.25, 1)
+	streak.WidthScale = NumberSequence.new(1, 0.3)
+	streak.Enabled = false
+	streak.Parent = head
+	return streak
+end
+
+-- Where the hammer head is right now (for the dust when it lands)
+function Swing.HeadPosition(model)
+	local hammer = model:FindFirstChild("BonkHammer")
+	local head = hammer and hammer:FindFirstChild("Head")
+	if head then
+		return head.Position
+	end
+	local root = model:FindFirstChild("HumanoidRootPart")
+	return root and (root.Position + root.CFrame.LookVector * 3 - Vector3.new(0, 2.5, 0)) or nil
+end
+
+local function step()
+	local now = os.clock()
+	for model, swing in pairs(active) do
+		local t = now - swing.started
+		if not model.Parent then
+			active[model] = nil
+		else
+			pose(swing, math.min(t, Swing.Seconds))
+			if swing.streak then
+				swing.streak.Enabled = t >= 0.06 and t <= Swing.ImpactSeconds + 0.03
+			end
+			if not swing.landed and t >= Swing.ImpactSeconds then
+				swing.landed = true
+				local position = Swing.HeadPosition(model)
+				if swing.onImpact and position then
+					task.spawn(swing.onImpact, model, position)
+				end
+			end
+			if t >= Swing.Seconds then
+				if swing.streak then
+					swing.streak.Enabled = false
+				end
+				active[model] = nil
+			end
+		end
+	end
+	if next(active) == nil and stepping then
+		stepping:Disconnect()
+		stepping = nil
+	end
+end
+
+-- Plays one swing on a character. onImpact(model, position) runs when the
+-- hammer lands. A new swing on the same character restarts it.
+function Swing.Play(model, onImpact)
+	if not model or not model.Parent then
+		return
+	end
+	local found = rig(model)
+	if not found.shoulder then
+		return
+	end
+	active[model] = { started = os.clock(), rig = found, onImpact = onImpact, streak = trail(model) }
+	if not stepping then
+		stepping = RunService.RenderStepped:Connect(step)
+	end
+end
+
+return Swing
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000024"><Properties><string name="Name">TouchButtons</string><ProtectedString name="Source"><![CDATA[-- Big round BONK and DASH buttons for phones and tablets, placed around
+-- Roblox's own jump button so the right thumb can reach all three. They fill
+-- up from the bottom while the move recharges. Hold BONK to keep swinging.
+-- They live inside Roblox's touch controls, so they hide whenever those hide.
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local UI = require(script.Parent.UI)
+local Controls = require(script.Parent.Controls)
+local T = UI.Theme
+
+local TouchButtons = {}
+
+local player = Players.LocalPlayer
+
+-- size and offset are in jump-button sizes, measured from the jump button's center
+local LAYOUT = {
+	bonk = { text = "BONK", color = Color3.fromRGB(255, 90, 60), size = 1.3, offset = Vector2.new(-1.4, -0.3) },
+	dash = { text = "DASH", color = Color3.fromRGB(60, 170, 255), size = 0.9, offset = Vector2.new(-0.2, -1.3) },
+}
+
+local function makeButton(info)
+	local button = UI.new("TextButton", {
+		Name = "Bonk" .. info.text,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.05,
+		Text = info.text,
+		TextColor3 = T.Text,
+		TextStrokeTransparency = 0.4,
+		Font = T.Font,
+		TextScaled = true,
+		AutoButtonColor = false,
+		Active = true,
+	}, {
+		UI.new("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		UI.new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 3, Transparency = 0.2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }),
+		UI.new("UIPadding", { PaddingTop = UDim.new(0.3, 0), PaddingBottom = UDim.new(0.3, 0), PaddingLeft = UDim.new(0.14, 0), PaddingRight = UDim.new(0.14, 0) }),
+		UI.new("UITextSizeConstraint", { MaxTextSize = 30 }),
+	})
+	local fill = UI.new("UIGradient", { Rotation = -90, Parent = button })
+	local press = UI.new("UIScale", { Parent = button })
+	return button, fill, press
+end
+
+-- Colors the button up to `ready` (0 to 1) from the bottom; the rest is dim
+local function setFill(fill, color, ready)
+	local dim = color:Lerp(Color3.fromRGB(30, 30, 40), 0.65)
+	if ready >= 1 then
+		fill.Color = ColorSequence.new(color)
+	elseif ready <= 0 then
+		fill.Color = ColorSequence.new(dim)
+	else
+		fill.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, color),
+			ColorSequenceKeypoint.new(ready, color),
+			ColorSequenceKeypoint.new(math.min(ready + 0.001, 1), dim),
+			ColorSequenceKeypoint.new(1, dim),
+		})
+	end
+end
+
+function TouchButtons.Init()
+	local buttons = {}
+	local holdingBonk = false
+
+	local held = {} -- [touch] = button id, for fingers still on a button
+	for id, info in pairs(LAYOUT) do
+		local button, fill, press = makeButton(info)
+		buttons[id] = { button = button, fill = fill, press = press, info = info }
+		button.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+				return
+			end
+			held[input] = id
+			press.Scale = 0.88
+			if id == "bonk" then
+				holdingBonk = true
+				Controls.Bonk()
+			else
+				Controls.Dash()
+			end
+		end)
+	end
+	-- A finger can slide off the button before it lifts, so watch every touch end
+	UserInputService.InputEnded:Connect(function(input)
+		local id = held[input]
+		if not id then
+			return
+		end
+		held[input] = nil
+		buttons[id].press.Scale = 1
+		if id == "bonk" then
+			holdingBonk = false
+			for _, other in pairs(held) do
+				if other == "bonk" then
+					holdingBonk = true
+				end
+			end
+		end
+	end)
+
+	-- Sit the buttons around the jump button whenever Roblox (re)builds it
+	local frame, jump = nil, nil
+	local function place()
+		if not frame or not jump or not jump.Parent then
+			return
+		end
+		local size = jump.AbsoluteSize.X
+		if size <= 0 then
+			return
+		end
+		local center = jump.AbsolutePosition + jump.AbsoluteSize / 2 - frame.AbsolutePosition
+		for _, entry in pairs(buttons) do
+			local info = entry.info
+			local spot = center + info.offset * size
+			entry.button.Size = UDim2.fromOffset(size * info.size, size * info.size)
+			entry.button.Position = UDim2.fromOffset(spot.X, spot.Y)
+			entry.button.Parent = frame
+		end
+	end
+	local watching = {}
+	local function watchJump(button)
+		jump = button
+		for _, connection in ipairs(watching) do
+			connection:Disconnect()
+		end
+		watching = {
+			button:GetPropertyChangedSignal("AbsolutePosition"):Connect(place),
+			button:GetPropertyChangedSignal("AbsoluteSize"):Connect(place),
+		}
+		place()
+	end
+	-- Roblox only makes its touch controls (TouchGui) on touch screens
+	local function attach(touchGui)
+		frame = touchGui:WaitForChild("TouchControlFrame")
+		frame:GetPropertyChangedSignal("AbsolutePosition"):Connect(place)
+		frame.ChildAdded:Connect(function(child)
+			if child.Name == "JumpButton" then
+				watchJump(child)
+			end
+		end)
+		local current = frame:FindFirstChild("JumpButton")
+		if current then
+			watchJump(current)
+		end
+	end
+	local playerGui = player:WaitForChild("PlayerGui")
+	playerGui.ChildAdded:Connect(function(child)
+		if child.Name == "TouchGui" then
+			attach(child)
+		end
+	end)
+	if playerGui:FindFirstChild("TouchGui") then
+		task.spawn(attach, playerGui.TouchGui)
+	end
+
+	RunService.Heartbeat:Connect(function()
+		if not frame then
+			return
+		end
+		if holdingBonk then
+			Controls.Bonk()
+		end
+		local bonkReady, dashReady = Controls.Cooldowns()
+		setFill(buttons.bonk.fill, buttons.bonk.info.color, bonkReady)
+		setFill(buttons.dash.fill, buttons.dash.info.color, dashReady)
+	end)
+end
+
+return TouchButtons
+]]></ProtectedString></Properties></Item><Item class="ModuleScript" referent="RBX00000025"><Properties><string name="Name">UI</string><ProtectedString name="Source"><![CDATA[-- Helpers for building the on-screen menus in code, so nothing has to be
 -- drawn by hand in Studio. Colors and fonts live in UI.Theme.
 
 local UI = {}

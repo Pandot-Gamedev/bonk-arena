@@ -184,7 +184,7 @@ local function toDeck(match, entity)
 	if not entity or not entity.root or not entity.root.Parent then
 		return
 	end
-	entity.space = nil
+	CombatService.SetSpace(entity, nil)
 	CombatService.Reset(entity) -- no giant hammer or shield on the deck
 	entity.model:SetAttribute("ShowDamage", false)
 	CombatService.Freeze(entity, false)
@@ -274,7 +274,7 @@ local function placeForRound(match)
 		if entity and CombatService.IsAlive(entity) then
 			local spawnCFrame = arena.spawns[((index - 1) % #arena.spawns) + 1]
 			CombatService.Reset(entity)
-			entity.space = match
+			CombatService.SetSpace(entity, match)
 			entity.model:SetAttribute("ShowDamage", true)
 			if participant.player then
 				entity.model:PivotTo(spawnCFrame)
@@ -371,7 +371,7 @@ local function endMatch(match)
 		elseif participant.player and participant.player.Parent then
 			local entity = CombatService.GetByPlayer(participant.player)
 			if entity then
-				entity.space = nil
+				CombatService.SetSpace(entity, nil)
 				CombatService.Reset(entity)
 				entity.model:SetAttribute("ShowDamage", false)
 				if entity.root and entity.root.Anchored then
@@ -533,7 +533,7 @@ local function runVictory(match, winner)
 	end
 	local winnerEntity = winner and match:Entity(winner)
 	if winnerEntity and winnerEntity.root and winnerEntity.root.Parent then
-		winnerEntity.space = nil
+		CombatService.SetSpace(winnerEntity, nil)
 		CombatService.Freeze(winnerEntity, false)
 		winnerEntity.model:SetAttribute("ShowDamage", false)
 		local stand = slot.podium * CFrame.new(0, 3, 0)

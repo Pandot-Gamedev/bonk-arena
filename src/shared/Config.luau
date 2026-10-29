@@ -16,14 +16,21 @@ Config.WalkSpeed = 18
 Config.JumpHeight = 7.2
 Config.DashSpeed = 75
 Config.DashSeconds = 0.18
-Config.DashCooldown = 1.6
+Config.DashCooldown = 1.3
+Config.DodgeSeconds = 0.3 -- bonks miss you for this long after you dash
 
 -- Bonking. Damage is shown as a percentage over each head: the higher it is,
 -- the farther the next bonk sends you (like Smash Bros).
-Config.BonkRange = 7.5 -- studs in front of you
-Config.BonkArc = 110 -- degrees wide
+Config.BonkRange = 8 -- studs in front of you
+Config.BonkArc = 120 -- degrees wide
 Config.BonkCooldown = 0.45
-Config.BonkImpactDelay = 0.12 -- the hammer lands this long after the swing starts
+Config.BonkMissCooldown = 0.9 -- a swing that hits nobody takes longer to recover (no free spamming)
+Config.BonkImpactDelay = 0.17 -- the hammer lands this long after the swing starts (Swing.ImpactSeconds matches it)
+-- Aim help: pressing BONK turns you to the closest rival within AimRange and,
+-- if they are a little out of reach, lunges you up to LungeDistance towards them.
+Config.AimRange = 11
+Config.LungeDistance = 4
+Config.LungeSeconds = 0.12
 Config.BonkDamageMin = 8
 Config.BonkDamageMax = 12
 Config.MaxDamage = 999

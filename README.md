@@ -38,9 +38,14 @@ a second player on the same pad: they take a bot's place when the next round sta
 
 ## What's in the game
 
-- **Bonking:** click or tap BONK to swing. The server checks every hit (in front of you, within
-  reach), so nobody can bonk from across the map. Each bonk adds 8 to 12% damage.
-- **Dash:** Q or the DASH button, every 1.6 seconds.
+- **Bonking:** click or tap BONK to swing. Pressing BONK turns you to the closest rival within
+  11 studs and lunges you up to 4 studs if they are just out of reach. The swing (wind-up,
+  slam, hammer streak, dust) is drawn on each player's screen; the server still checks every hit
+  (in front of you, within reach). Each bonk adds 8 to 12% damage. A swing that hits nobody
+  takes 0.9 s to recover instead of 0.45 s, so swinging nonstop doesn't wall people off.
+- **Dash:** Q or the DASH button, every 1.3 seconds. Bonks miss you for 0.3 s after a dash.
+- **Phones:** landscape only, with big round BONK and DASH buttons placed around Roblox's jump
+  button (they fill up while recharging; hold BONK to keep swinging) and smaller match cards.
 - **Matches:** three queue pads in the lobby (a 1 v 1 duel and two brawls for up to 4). A match
   starts when a pad is full, or after 20 seconds with bots filling the empty spots. Best of 3
   rounds, a different arena each round. Knocked-out players watch from a deck next to the
@@ -100,9 +105,11 @@ src/server/              ServerScriptService.Server
   ProgressService.luau   coins, XP, levels, quests, Locker purchases
   MapBuilder.luau        builds the sky lobby and the three arena spots
 src/client/              StarterPlayerScripts.Client
-  Controls.luau          bonk and dash buttons, flying when bonked
+  Controls.luau          bonk and dash, aim help and lunge, flying when bonked
+  Swing.luau             the hammer swing animation, drawn on every screen
+  TouchButtons.luau      the BONK and DASH buttons on phones and tablets
   MatchHud.luau          round, timer, player cards, announcements, watching a match
-  Effects.luau           hit sparks, damage numbers, knockout effects
+  Effects.luau           hit sparks, damage numbers, knockout effects, screen shake
 tools/build_place.py     rebuilds build/BonkArena.rbxlx from src/
 tools/studio_install.py  prints a command-bar line that installs src/ into an open Studio place
 tools/make_store_art.py  draws the icon, thumbnails and shop icons into store/
