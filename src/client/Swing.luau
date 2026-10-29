@@ -15,8 +15,8 @@ local Swing = {}
 local POSES = {
 	{ 0, 0, 0, 0 },
 	{ 0.1, 165, 30, 10, "out" },
-	{ 0.17, 60, -80, -15, "in" },
-	{ 0.24, 60, -80, -15 },
+	{ 0.17, 55, -70, -25, "in" },
+	{ 0.24, 55, -70, -25 },
 	{ 0.46, 0, 0, 0, "back" },
 }
 -- Old blocky avatars (R6) have no wrist or waist, so the arm goes further down
