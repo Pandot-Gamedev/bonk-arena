@@ -185,6 +185,7 @@ local function toDeck(match, entity)
 		return
 	end
 	entity.space = nil
+	CombatService.Reset(entity) -- no giant hammer or shield on the deck
 	entity.model:SetAttribute("ShowDamage", false)
 	CombatService.Freeze(entity, false)
 	local spot = match.slot.deck * CFrame.new(random:NextNumber(-12, 12), 0, random:NextNumber(-3, 4))

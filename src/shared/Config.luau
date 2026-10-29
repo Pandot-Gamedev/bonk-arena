@@ -29,10 +29,10 @@ Config.BonkDamageMax = 12
 Config.MaxDamage = 999
 
 -- Knockback speed = Base + Scale * damage (studs per second)
-Config.KnockBase = 30
-Config.KnockScale = 0.8
-Config.KnockUpBase = 35
-Config.KnockUpScale = 0.25
+Config.KnockBase = 16
+Config.KnockScale = 0.6
+Config.KnockUpBase = 22
+Config.KnockUpScale = 0.3
 -- Stunned (tumbling, no control) for Base + Scale * damage seconds, up to Max
 Config.StunBase = 0.3
 Config.StunScale = 0.005
