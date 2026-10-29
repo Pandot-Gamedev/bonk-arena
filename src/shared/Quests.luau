@@ -49,9 +49,13 @@ function Quests.Generate(userId, day)
 		local isArena = string.sub(quest.id, 1, 6) == "round_"
 		if not (isArena and arenaQuest) then
 			arenaQuest = arenaQuest or isArena
+			local goal = random:NextInteger(quest.goal[1], quest.goal[2])
+			if goal >= 20 then
+				goal = math.floor(goal / 5 + 0.5) * 5 -- 45 bonks, not 43
+			end
 			table.insert(list, {
 				id = quest.id,
-				goal = random:NextInteger(quest.goal[1], quest.goal[2]),
+				goal = goal,
 				progress = 0,
 				done = false,
 			})

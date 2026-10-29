@@ -71,6 +71,13 @@ local function note(parent, text, order)
 end
 
 -- A small colour swatch so you can tell items apart at a glance
+-- An item's name on its card, all at the same size whether it's short or long
+local function itemName(card, text, width)
+	local label = UI.label(text, { Position = UDim2.fromOffset(48, 0), Size = UDim2.new(width, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, Parent = card })
+	UI.new("UITextSizeConstraint", { MaxTextSize = 20, Parent = label })
+	return label
+end
+
 local function swatch(card, item)
 	local color = item.head or item.color or (item.colors and item.colors[1]) or T.Muted
 	UI.new("Frame", { Position = UDim2.fromOffset(10, 12), Size = UDim2.fromOffset(28, 28), BackgroundColor3 = color, Parent = card }, { UI.corner(14), UI.stroke(T.Background, 2) })
@@ -128,7 +135,7 @@ local function renderShop(body)
 			for _, item in ipairs(items) do
 				local card = row(body, 52, nextOrder())
 				swatch(card, item)
-				UI.label(item.name, { Position = UDim2.fromOffset(48, 0), Size = UDim2.new(0.6, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, Parent = card })
+				itemName(card, item.name, 0.6)
 				local owned = data.cosmetics.owned[item.id]
 				local equipped = data.cosmetics.equipped[item.kind] == item.id
 				local button = cardButton(card, "...", T.Good)
@@ -183,7 +190,7 @@ local function renderLocker(body)
 	-- Tabs, one per kind of cosmetic
 	local tabs = UI.new("Frame", { Size = UDim2.new(1, -8, 0, 36), BackgroundTransparency = 1, LayoutOrder = 0, Parent = body }, { UI.list(6, Enum.FillDirection.Horizontal) })
 	for _, kind in ipairs(Cosmetics.Kinds) do
-		UI.button(kind.name, kind.id == lockerTab and T.Accent or T.Card, function()
+		UI.button(kind.short, kind.id == lockerTab and T.Accent or T.Card, function()
 			lockerTab = kind.id
 			Panels.Locker.refresh()
 		end, { Size = UDim2.fromOffset(104, 34), Parent = tabs })
@@ -199,7 +206,7 @@ local function renderLocker(body)
 			local isEquipped = equipped and equipped.id == item.id
 			local card = row(body, 52, order)
 			swatch(card, item)
-			UI.label(item.name, { Position = UDim2.fromOffset(48, 0), Size = UDim2.new(0.55, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, Parent = card })
+			itemName(card, item.name, 0.55)
 			if owns then
 				local canTakeOff = isEquipped and not Cosmetics.Defaults[item.kind]
 				cardButton(card, isEquipped and (canTakeOff and "Take off" or "Equipped") or "Equip", isEquipped and T.Card or T.Accent, function()

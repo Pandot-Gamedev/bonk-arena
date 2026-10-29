@@ -18,11 +18,11 @@ local function rgb(r, g, b)
 end
 
 Cosmetics.Kinds = {
-	{ id = "hammer", name = "Hammers" },
-	{ id = "ko", name = "Knockout effects" },
-	{ id = "dance", name = "Victory dances" },
-	{ id = "title", name = "Titles" },
-	{ id = "trail", name = "Trails" },
+	{ id = "hammer", name = "Hammers", short = "Hammers" },
+	{ id = "ko", name = "Knockout effects", short = "KO effects" },
+	{ id = "dance", name = "Victory dances", short = "Dances" },
+	{ id = "title", name = "Titles", short = "Titles" },
+	{ id = "trail", name = "Trails", short = "Trails" },
 }
 
 -- Hammer looks: shape "hammer" (foam hammer), "mallet" (wooden mallet),
