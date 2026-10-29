@@ -230,42 +230,58 @@ function CombatService.Push(entity, velocity, stun, addDamage, by)
 end
 
 ------------------------------------------------------------------ Bonking
+-- The right shoulder joint and the axis that lifts the arm forward. Older rigs
+-- use a Motor6D (turn its C0); newer ones an AnimationConstraint (turn the
+-- shoulder attachment on the torso instead).
 local function shoulder(model)
+	local joint, axis = nil, nil
 	local arm = model:FindFirstChild("RightUpperArm")
 	if arm and arm:FindFirstChild("RightShoulder") then
-		return arm.RightShoulder, Vector3.xAxis
+		joint, axis = arm.RightShoulder, Vector3.xAxis
+	else
+		local torso = model:FindFirstChild("Torso")
+		if torso and torso:FindFirstChild("Right Shoulder") then
+			joint, axis = torso["Right Shoulder"], Vector3.zAxis
+		end
 	end
-	local torso = model:FindFirstChild("Torso")
-	if torso and torso:FindFirstChild("Right Shoulder") then
-		return torso["Right Shoulder"], Vector3.zAxis
+	if not joint then
+		return nil
+	end
+	if joint:IsA("Motor6D") then
+		return joint, "C0", axis
+	elseif joint:IsA("AnimationConstraint") and joint.Attachment0 then
+		return joint.Attachment0, "CFrame", axis
 	end
 	return nil
 end
 
 -- Swings the right arm (and the hammer in that hand) up and down
 local function swing(entity)
-	local motor, axis = shoulder(entity.model)
-	if not motor then
+	local target, property, axis = shoulder(entity.model)
+	if not target then
 		return
 	end
-	entity.shoulderBase = entity.shoulderBase or motor.C0
+	if entity.shoulderTarget ~= target then
+		entity.shoulderTarget = target
+		entity.shoulderBase = target[property]
+	end
 	local base = entity.shoulderBase
 	local function at(degrees)
 		return base * CFrame.fromAxisAngle(axis, math.rad(degrees))
 	end
 	entity.swingToken = (entity.swingToken or 0) + 1
 	local token = entity.swingToken
-	TweenService:Create(motor, TweenInfo.new(0.07), { C0 = at(165) }):Play()
+	TweenService:Create(target, TweenInfo.new(0.07), { [property] = at(165) }):Play()
 	task.delay(0.07, function()
-		if entity.swingToken ~= token or not motor.Parent then
+		if entity.swingToken ~= token or not target.Parent then
 			return
 		end
-		TweenService:Create(motor, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { C0 = at(55) }):Play()
+		TweenService:Create(target, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { [property] = at(55) }):Play()
 		task.delay(0.22, function()
-			if entity.swingToken ~= token or not motor.Parent then
+			if entity.swingToken ~= token or not target.Parent then
 				return
 			end
-			TweenService:Create(motor, TweenInfo.new(0.2), { C0 = base }):Play()
+			TweenService:Create(target, TweenInfo.new(0.2), { [property] = base }):Play()
 		end)
 	end)
 end
