@@ -9,7 +9,7 @@
 local Shop = {}
 
 Shop.Passes = {
-	{ id = "VIP", gamePassId = 0, name = "VIP", suggestedPrice = 250, description = "Golden name tag, a crown, the Royal Hammer and +25% coins (coins only buy looks)." },
+	{ id = "VIP", gamePassId = 2060495027, name = "VIP", suggestedPrice = 250, description = "Golden name tag, a crown, the Royal Hammer and +25% coins (coins only buy looks)." },
 }
 
 Shop.PassById = {}

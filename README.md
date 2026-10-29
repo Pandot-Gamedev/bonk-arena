@@ -75,7 +75,9 @@ a second player on the same pad: they take a bot's place when the next round sta
 
 Nothing sold for Robux changes how hard you bonk, how far you fly, or what power-ups you get.
 Pass and product ids go in `src/shared/Shop.luau` and `src/shared/Cosmetics.luau` (0 means
-"Coming soon" in the shop).
+"Coming soon" in the shop). All of them were created on 2026-10-29 with
+`tools/create_shop_items.luau`: the VIP pass is 2060495027 and the 16 developer products are
+3723464586 to 3723464724.
 
 ## Roblox settings to set when publishing
 

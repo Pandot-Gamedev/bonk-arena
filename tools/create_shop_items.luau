@@ -19,7 +19,8 @@ local HttpService = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
 
 local UNIVERSE = 10773598334
-local MAKE_PASSES = true
+-- The VIP pass was created on 2026-10-29 (2060495027), so this stays false.
+local MAKE_PASSES = false
 local ICONS = "https://raw.githubusercontent.com/Pandot-Gamedev/bonk-arena/refs/heads/claude/project-thread-x8udij/store/"
 local key = HttpService:GetSecret("ShopKey")
 
