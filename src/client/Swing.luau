@@ -14,9 +14,9 @@ local Swing = {}
 -- carries on the line of the arm. Waist: + leans back, - leans forward.
 local POSES = {
 	{ 0, 0, 0, 0 },
-	{ 0.1, 170, 25, 12, "out" },
-	{ 0.17, 50, -90, -22, "in" },
-	{ 0.24, 50, -90, -22 },
+	{ 0.1, 165, 30, 10, "out" },
+	{ 0.17, 60, -80, -15, "in" },
+	{ 0.24, 60, -80, -15 },
 	{ 0.46, 0, 0, 0, "back" },
 }
 -- Old blocky avatars (R6) have no wrist or waist, so the arm goes further down
@@ -30,7 +30,7 @@ local POSES_R6 = {
 Swing.ImpactSeconds = 0.17 -- when the hammer hits the ground (Config.BonkImpactDelay matches it)
 Swing.Seconds = 0.46
 
-local bases = setmetatable({}, { __mode = "k" }) -- [joint target] = its resting CFrame
+local rigs = setmetatable({}, { __mode = "k" }) -- [model] = its joints, kept between swings
 local active = {} -- [model] = the swing playing on it
 local stepping = nil
 
@@ -46,43 +46,61 @@ local function ease(style, a)
 	return a
 end
 
--- A joint to turn. Older rigs use a Motor6D (turn its C0); newer ones an
--- AnimationConstraint (turn the attachment on the parent part instead).
+-- A joint to turn: a Motor6D on older rigs, an AnimationConstraint on newer
+-- avatars. Both are turned through their Transform, which the character's
+-- Animator sets every frame, so the swing is added on top of whatever
+-- animation is playing (the joint's own C0 or attachments can be ignored).
 local function joint(part, name, axis)
 	local found = part and part:FindFirstChild(name)
-	if not found then
-		return nil
+	if found and (found:IsA("Motor6D") or found:IsA("AnimationConstraint")) then
+		return { joint = found, axis = axis }
 	end
-	local target, property
-	if found:IsA("Motor6D") then
-		target, property = found, "C0"
-	elseif found:IsA("AnimationConstraint") and found.Attachment0 then
-		target, property = found.Attachment0, "CFrame"
-	else
-		return nil
-	end
-	if not bases[target] then
-		bases[target] = target[property]
-	end
-	return { target = target, property = property, axis = axis }
+	return nil
 end
 
 local function rig(model)
+	local cached = rigs[model]
+	if cached and cached.shoulder and cached.shoulder.joint:IsDescendantOf(model) then
+		return cached
+	end
+	local found
 	local upperArm = model:FindFirstChild("RightUpperArm")
 	if upperArm then
-		return {
+		found = {
 			poses = POSES,
 			shoulder = joint(upperArm, "RightShoulder", Vector3.xAxis),
 			wrist = joint(model:FindFirstChild("RightHand"), "RightWrist", Vector3.xAxis),
 			waist = joint(model:FindFirstChild("UpperTorso"), "Waist", Vector3.xAxis),
 		}
+	else
+		found = { poses = POSES_R6, shoulder = joint(model:FindFirstChild("Torso"), "Right Shoulder", Vector3.zAxis) }
 	end
-	return { poses = POSES_R6, shoulder = joint(model:FindFirstChild("Torso"), "Right Shoulder", Vector3.zAxis) }
+	rigs[model] = found
+	return found
 end
 
+-- Turns the joint `degrees` past its animated pose for this frame
 local function turn(j, degrees)
-	if j and j.target.Parent then
-		j.target[j.property] = bases[j.target] * CFrame.fromAxisAngle(j.axis, math.rad(degrees))
+	if not j or not j.joint.Parent then
+		return
+	end
+	local current = j.joint.Transform
+	-- Unchanged since our last turn means no animation moved it this frame,
+	-- so start again from the pose it had before, or the turns would pile up
+	if current ~= j.written then
+		j.animated = current
+	end
+	j.joint.Transform = CFrame.fromAxisAngle(j.axis, math.rad(degrees)) * j.animated
+	j.written = j.joint.Transform
+end
+
+-- Hands the joint back to its animation
+local function release(j)
+	if j and j.written then
+		if j.joint.Parent and j.joint.Transform == j.written then
+			j.joint.Transform = j.animated
+		end
+		j.written = nil
 	end
 end
 
@@ -192,7 +210,8 @@ function Swing.Play(model, onImpact)
 	end
 	active[model] = { started = os.clock(), rig = found, onImpact = onImpact, streak = trail(model) }
 	if not stepping then
-		stepping = RunService.RenderStepped:Connect(step)
+		-- Stepped runs just after the Animator has posed everyone for this frame
+		stepping = RunService.Stepped:Connect(step)
 	end
 end
 
