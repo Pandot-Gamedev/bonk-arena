@@ -23,7 +23,7 @@ function Hud.Init(screenGui)
 	-- Stats, top left
 	local stats = UI.new("Frame", {
 		Name = "Stats",
-		Position = UDim2.fromOffset(16, 16),
+		Position = UDim2.fromOffset(16, 60),
 		Size = UDim2.fromOffset(230, 96),
 		BackgroundColor3 = T.Background,
 		BackgroundTransparency = 0.15,
@@ -74,7 +74,7 @@ function Hud.Init(screenGui)
 	-- Menu buttons, left side under the stats, with keyboard shortcuts
 	local menu = UI.new("Frame", {
 		Name = "Menu",
-		Position = UDim2.fromOffset(16, 122),
+		Position = UDim2.fromOffset(16, 166),
 		Size = UDim2.fromOffset(130, 5 * 48),
 		BackgroundTransparency = 1,
 		Parent = screenGui,
@@ -99,7 +99,8 @@ function Hud.Init(screenGui)
 	end, { Size = UDim2.fromOffset(130, 42), LayoutOrder = 10, Visible = false, Parent = menu })
 
 	-- The private server owner picks the arena
-	local isOwner = (game.PrivateServerId ~= "" and game.PrivateServerOwnerId == player.UserId) or RunService:IsStudio()
+	-- Only the server can see who owns a private server; it shares that as an attribute
+	local isOwner = ReplicatedStorage:GetAttribute("PrivateServerOwnerId") == player.UserId or RunService:IsStudio()
 	if isOwner then
 		UI.button("Arena", Color3.fromRGB(255, 120, 60), function()
 			Panels.Arena.toggle()

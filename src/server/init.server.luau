@@ -14,6 +14,11 @@ local ProgressService = require(script.ProgressService)
 local MatchService = require(script.MatchService)
 local WorldService = require(script.WorldService)
 
+-- Players' screens can't check who owns a private server, so share it
+if game.PrivateServerId ~= "" then
+	game:GetService("ReplicatedStorage"):SetAttribute("PrivateServerOwnerId", game.PrivateServerOwnerId)
+end
+
 MapBuilder.Build()
 
 -- Services that react to players loading must start before DataService

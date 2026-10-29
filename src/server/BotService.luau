@@ -39,6 +39,7 @@ local ANIMATIONS = {
 local random = Random.new()
 local folder
 local nameIndex = 0
+local botCount = 0
 
 local function flat(vector)
 	return Vector3.new(vector.X, 0, vector.Z)
@@ -114,6 +115,7 @@ function BotService.Create(cframe)
 		warn("[BotService] Couldn't make a bot: " .. tostring(model))
 		return nil
 	end
+	botCount += 1
 	model.Name = "Bot " .. name
 	model:PivotTo(cframe)
 	model.Parent = folder
@@ -126,7 +128,7 @@ function BotService.Create(cframe)
 		oldAnimate:Destroy()
 	end
 	pcall(animate, model:FindFirstChildOfClass("Humanoid"))
-	local entity = CombatService.Register(model, { kind = "bot", name = name .. " (bot)", key = "b" .. model:GetDebugId(), walkSpeed = BotService.WalkSpeed })
+	local entity = CombatService.Register(model, { kind = "bot", name = name .. " (bot)", key = "b" .. botCount, walkSpeed = BotService.WalkSpeed })
 	entity.hammerItem = Cosmetics.ById[BOT_HAMMERS[random:NextInteger(1, #BOT_HAMMERS)]]
 	entity.nextThink = 0
 	entity.nextBonk = 0

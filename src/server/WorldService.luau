@@ -19,6 +19,7 @@ local WorldService = {}
 
 local LEADERBOARD_REFRESH = 120
 local DUMMY_RESET = 6 -- seconds without a hit before a dummy's damage goes back to 0
+local dummyCount = 0
 
 ------------------------------------------------------------------ Practice dummies
 local function makeDummy(spot)
@@ -36,6 +37,7 @@ local function makeDummy(spot)
 	if not ok or not model then
 		return nil
 	end
+	dummyCount += 1
 	model.Name = "PracticeDummy"
 	local home = CFrame.lookAt(spot.Position, Vector3.new(spot.Position.X - 10, spot.Position.Y, spot.Position.Z))
 	model:PivotTo(home)
@@ -43,7 +45,7 @@ local function makeDummy(spot)
 	pcall(function()
 		model.HumanoidRootPart:SetNetworkOwner(nil)
 	end)
-	local entity = CombatService.Register(model, { kind = "dummy", name = "Practice Dummy", key = "d" .. model:GetDebugId(), walkSpeed = 8 })
+	local entity = CombatService.Register(model, { kind = "dummy", name = "Practice Dummy", key = "d" .. dummyCount, walkSpeed = 8 })
 	entity.home = home
 	model:SetAttribute("ShowDamage", true)
 	CosmeticService.Tag(model, { name = "Practice Dummy", nameColor = Color3.fromRGB(255, 220, 160), subtitle = "Bonk me!" })
