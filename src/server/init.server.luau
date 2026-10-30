@@ -1,4 +1,4 @@
--- Bonk Arena server. Starts every service in order.
+-- Bonk Your Friends Off! server. Starts every service in order.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -75,4 +75,4 @@ if RunService:IsStudio() then
 	test.Parent = game:GetService("ServerStorage")
 end
 
-print("[Bonk Arena] Server ready")
+print("[Bonk Your Friends Off!] Server ready")

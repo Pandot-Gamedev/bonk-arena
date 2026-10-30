@@ -1,4 +1,4 @@
--- Bonk Arena player script. Builds the screen and starts the controls.
+-- Bonk Your Friends Off! player script. Builds the screen and starts the controls.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")

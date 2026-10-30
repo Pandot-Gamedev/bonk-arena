@@ -266,8 +266,8 @@ function MapBuilder.Build()
 	sign(howTo, howToText, Enum.NormalId.Back, Color3.fromRGB(255, 240, 200), 30)
 
 	local title = part({ Name = "TitleSign", Size = Vector3.new(40, 9, 1), Position = Vector3.new(0, 26, -62), Color = Color3.fromRGB(255, 120, 60), Material = Enum.Material.SmoothPlastic, Parent = scenery })
-	sign(title, "BONK ARENA", Enum.NormalId.Back, Color3.new(1, 1, 1))
-	sign(title, "BONK ARENA", Enum.NormalId.Front, Color3.new(1, 1, 1))
+	sign(title, "BONK YOUR FRIENDS OFF!", Enum.NormalId.Back, Color3.new(1, 1, 1))
+	sign(title, "BONK YOUR FRIENDS OFF!", Enum.NormalId.Front, Color3.new(1, 1, 1))
 	for _, x in ipairs({ -18, 18 }) do
 		part({ Name = "TitlePost", Size = Vector3.new(1.2, 22, 1.2), Position = Vector3.new(x, 11, -62), Color = Color3.fromRGB(60, 60, 70), Material = Enum.Material.Metal, Parent = scenery })
 	end

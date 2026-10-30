@@ -1,4 +1,6 @@
-# Bonk Arena
+# Bonk Your Friends Off!
+
+Called Bonk Arena until 2026-10-30, when it was renamed to stand out in Roblox search (no other game uses the new name). The repo, file and code names keep the old name.
 
 A Roblox party brawler for 2 to 4 players: knock your rivals off floating arenas with a foam
 hammer. Every bonk adds damage %, and the higher it is, the farther the next bonk sends you

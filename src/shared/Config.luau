@@ -2,7 +2,7 @@
 
 local Config = {}
 
-Config.GameName = "Bonk Arena"
+Config.GameName = "Bonk Your Friends Off!"
 
 -- Saving
 Config.DataStoreName = "PlayerData_v1"

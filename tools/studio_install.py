@@ -35,7 +35,7 @@ def main():
         f'for n in ("{names("server")}"):gmatch("%S+") do mk("ModuleScript",n,sv,"server/"..n..".luau") end '
         'local cl=mk("LocalScript","Client",game.StarterPlayer.StarterPlayerScripts,"client/init.client.luau") '
         f'for n in ("{names("client")}"):gmatch("%S+") do mk("ModuleScript",n,cl,"client/"..n..".luau") end '
-        'H.HttpEnabled=false print("BONK ARENA INSTALLED ' + commit[:7] + '")'
+        'H.HttpEnabled=false print("BONK YOUR FRIENDS OFF INSTALLED ' + commit[:7] + '")'
     )
     print(line)
 
