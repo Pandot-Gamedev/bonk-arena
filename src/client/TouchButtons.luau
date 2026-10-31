@@ -105,6 +105,7 @@ function TouchButtons.Init()
 
 	-- Sit the buttons around the jump button whenever Roblox (re)builds it
 	local frame, jump = nil, nil
+	local hidJump = false -- true while we hide Roblox's jump button for an open menu
 	local function place()
 		if not frame or not jump or not jump.Parent then
 			return
@@ -171,6 +172,16 @@ function TouchButtons.Init()
 		buttons.dash.button.Visible = not menuOpen
 		if menuOpen then
 			holdingBonk = false
+		end
+		-- Roblox doesn't always hide its jump button (dynamic thumbstick), so do it here
+		if jump and jump.Parent then
+			if menuOpen and jump.Visible then
+				jump.Visible = false
+				hidJump = true
+			elseif not menuOpen and hidJump then
+				hidJump = false
+				jump.Visible = true
+			end
 		end
 		local bonkReady, dashReady = Controls.Cooldowns()
 		setFill(buttons.bonk.fill, buttons.bonk.info.color, bonkReady)
