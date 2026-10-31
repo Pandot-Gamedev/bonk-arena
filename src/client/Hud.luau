@@ -12,6 +12,7 @@ local Format = require(Shared.Format)
 local UI = require(script.Parent.UI)
 local State = require(script.Parent.State)
 local Panels = require(script.Parent.Panels)
+local Notifications = require(script.Parent.Notifications)
 local MatchHud = require(script.Parent.MatchHud)
 local T = UI.Theme
 
@@ -68,6 +69,21 @@ function Hud.Init(screenGui)
 				queueLine.Text = ReplicatedStorage:GetAttribute("PadStatus" .. pad) or "Waiting..."
 			end
 			task.wait(0.2)
+		end
+	end)
+
+	-- Menus freeze you while they are open, so they stay shut during a match
+	-- (you'd be a sitting duck). One that is open when your match starts closes.
+	UI.CanOpen = function()
+		if player:GetAttribute("InMatch") ~= nil then
+			Notifications.Show("Menus open again after your match", "info")
+			return false
+		end
+		return true
+	end
+	player:GetAttributeChangedSignal("InMatch"):Connect(function()
+		if player:GetAttribute("InMatch") ~= nil then
+			UI.CloseAll()
 		end
 	end)
 

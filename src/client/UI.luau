@@ -108,6 +108,15 @@ function UI.IsWindowOpen()
 	return openWindow ~= nil
 end
 
+-- Set by the HUD: returns false (and says why) when menus can't open right now
+UI.CanOpen = nil
+
+function UI.CloseAll()
+	if openWindow then
+		openWindow.close()
+	end
+end
+
 function UI.window(screenGui, title, render)
 	local frame = UI.new("Frame", {
 		Name = title .. "Window",
@@ -145,13 +154,19 @@ function UI.window(screenGui, title, render)
 	end
 
 	function window.open()
+		if UI.CanOpen and not UI.CanOpen() then
+			return
+		end
 		if openWindow and openWindow ~= window then
 			openWindow.close()
 		end
+		local wasOpen = openWindow ~= nil
 		openWindow = window
 		frame.Visible = true
 		window.refresh()
-		windowChanged:Fire(true)
+		if not wasOpen then
+			windowChanged:Fire(true)
+		end
 	end
 
 	function window.close()

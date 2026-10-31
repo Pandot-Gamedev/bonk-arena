@@ -1,6 +1,8 @@
 -- Bonk and dash controls, and flying when you get bonked.
 --   Bonk: click, F, R2 on a controller, or the BONK button on phones
 --   Dash: Q, X on a controller, or the DASH button on phones
+-- While a menu (Shop, Locker, Quests, Arena) is open you stand still and
+-- can't bonk, dash or jump.
 -- Pressing BONK turns you to the closest rival in reach (and lunges you a
 -- little if they are just out of reach), then swings straight away on your
 -- screen. The server still decides who gets hit.
@@ -8,6 +10,7 @@
 local CollectionService = game:GetService("CollectionService")
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local Workspace = game:GetService("Workspace")
 
@@ -16,6 +19,7 @@ local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 
 local Swing = require(script.Parent.Swing)
+local UI = require(script.Parent.UI)
 
 local Controls = {}
 
@@ -115,7 +119,7 @@ end
 function Controls.Bonk()
 	local now = os.clock()
 	local root, humanoid = parts()
-	if not root or now - lastBonk < Config.BonkCooldown or now < stunnedUntil or missWait() > 0.05 then
+	if not root or UI.IsWindowOpen() or now - lastBonk < Config.BonkCooldown or now < stunnedUntil or missWait() > 0.05 then
 		return
 	end
 	if humanoid.WalkSpeed <= 0 then
@@ -152,7 +156,7 @@ end
 function Controls.Dash()
 	local now = os.clock()
 	local root, humanoid = parts()
-	if not root or now - lastDash < Config.DashCooldown or now < stunnedUntil or humanoid.WalkSpeed <= 0 then
+	if not root or UI.IsWindowOpen() or now - lastDash < Config.DashCooldown or now < stunnedUntil or humanoid.WalkSpeed <= 0 then
 		return
 	end
 	local direction = flat(humanoid.MoveDirection)
@@ -205,6 +209,53 @@ local function onLaunch(velocity, stun, spin)
 	end)
 end
 
+------------------------------------------------------------------ Menu freeze
+-- Roblox's own movement controls (keyboard, thumbstick, controller)
+local robloxControls = nil
+local function getRobloxControls()
+	if robloxControls == nil then
+		local ok, controls = pcall(function()
+			local module = player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule", 10)
+			return require(module):GetControls()
+		end)
+		robloxControls = ok and controls or false
+	end
+	return robloxControls or nil
+end
+
+local function onMenuChanged()
+	local open = UI.IsWindowOpen()
+	local controls = getRobloxControls()
+	if controls then
+		if open then
+			controls:Disable()
+		else
+			controls:Enable()
+		end
+	end
+	if open then
+		stopMoving()
+		local _, humanoid = parts()
+		if humanoid then
+			humanoid:Move(Vector3.zero)
+			humanoid.Jump = false
+		end
+	end
+end
+
+-- Runs right after Roblox reads the controls each frame, so nothing can
+-- walk or jump you while a menu is open (even a controller plugged in later)
+local function holdStill()
+	if not UI.IsWindowOpen() then
+		return
+	end
+	local _, humanoid = parts()
+	if humanoid then
+		humanoid:Move(Vector3.zero)
+		humanoid.Jump = false
+	end
+end
+
 function Controls.Init()
 	pcall(function()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
@@ -230,7 +281,13 @@ function Controls.Init()
 		stunToken += 1
 		stunnedUntil = 0
 		moving = nil
+		task.defer(onMenuChanged)
 	end)
+
+	UI.WindowChanged:Connect(function()
+		task.defer(onMenuChanged) -- after a switch from one menu to another settles
+	end)
+	RunService:BindToRenderStep("BonkArenaMenuFreeze", Enum.RenderPriority.Input.Value + 1, holdStill)
 end
 
 return Controls

@@ -183,6 +183,115 @@ function CosmeticService.Tag(model, info)
 	gui.Parent = head
 end
 
+------------------------------------------------------------------ VIP crown
+-- A real king's crown built from parts: a gold band with a darker rim,
+-- five tall points with pearls on top and five small ones between them,
+-- jewels on the band, a red velvet cap inside and a gold orb on top.
+local CROWN_GOLD = Color3.fromRGB(255, 196, 45)
+local CROWN_RIM = Color3.fromRGB(214, 140, 22)
+local CROWN_VELVET = Color3.fromRGB(170, 20, 45)
+local PEARL = Color3.fromRGB(255, 250, 235)
+local JEWELS = { Color3.fromRGB(235, 30, 60), Color3.fromRGB(40, 120, 255), Color3.fromRGB(235, 30, 60), Color3.fromRGB(40, 200, 110), Color3.fromRGB(40, 120, 255) }
+local CROWN_SIDES = 10
+
+local function buildCrown(character, head)
+	local crown = Instance.new("Model")
+	crown.Name = "BonkCrown"
+
+	-- Sized to the head, so it fits big and small avatars alike
+	local s = math.clamp(math.min(head.Size.X, head.Size.Z) / 1.2, 0.75, 1.5)
+	local radius = 0.56 * s
+	local bandHeight = 0.3 * s
+	local thickness = 0.07 * s
+	local sideWidth = 2 * radius * math.tan(math.pi / CROWN_SIDES) + 0.03 * s
+	-- Center of the band: a little above the head, so it sits on top of most hair
+	local bandY = head.Size.Y / 2 + 0.14 * s + bandHeight / 2
+
+	local function add(className, size, offset, color, material, props)
+		local part = Instance.new(className)
+		part.Name = "CrownPiece"
+		part.Size = size
+		part.Color = color
+		part.Material = material or Enum.Material.Metal
+		part.Reflectance = material == nil and 0.15 or 0
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.Massless = true
+		part.CastShadow = false
+		part.CFrame = head.CFrame * offset
+		for key, value in pairs(props or {}) do
+			part[key] = value
+		end
+		local weld = Instance.new("Weld")
+		weld.Part0 = head
+		weld.Part1 = part
+		weld.C0 = offset
+		weld.Parent = part
+		part.Parent = crown
+		return part
+	end
+
+	-- A triangle point standing on the band, made of two mirrored wedges
+	local function point(side, height, width)
+		local half = width / 2
+		local base = side * CFrame.new(0, bandHeight / 2 + height / 2, 0)
+		local size = Vector3.new(thickness, height, half)
+		add("WedgePart", size, base * CFrame.new(-half / 2, 0, 0) * CFrame.Angles(0, math.pi / 2, 0), CROWN_GOLD)
+		add("WedgePart", size, base * CFrame.new(half / 2, 0, 0) * CFrame.Angles(0, -math.pi / 2, 0), CROWN_GOLD)
+	end
+
+	local jewel = 0
+	for index = 0, CROWN_SIDES - 1 do
+		-- Side 0 faces forward (-Z); each side's own Z points away from the center
+		local angle = math.pi + index * 2 * math.pi / CROWN_SIDES
+		local side = CFrame.new(0, bandY, 0) * CFrame.Angles(0, angle, 0) * CFrame.new(0, 0, radius)
+		add("Part", Vector3.new(sideWidth, bandHeight, thickness), side, CROWN_GOLD)
+		-- Rim along the bottom
+		add("Part", Vector3.new(sideWidth + 0.02 * s, 0.07 * s, thickness * 1.6), side * CFrame.new(0, -bandHeight / 2 + 0.035 * s, 0), CROWN_RIM)
+
+		if index % 2 == 0 then
+			local height = 0.38 * s
+			point(side, height, sideWidth)
+			add("Part", Vector3.one * 0.13 * s, side * CFrame.new(0, bandHeight / 2 + height + 0.03 * s, 0), PEARL, Enum.Material.SmoothPlastic, { Shape = Enum.PartType.Ball, Reflectance = 0.3 })
+			jewel += 1
+			local gemSize = (index == 0 and 0.15 or 0.11) * s
+			add("Part", Vector3.one * gemSize, side * CFrame.new(0, 0.01 * s, thickness / 2), JEWELS[jewel], Enum.Material.Neon, { Shape = Enum.PartType.Ball })
+		else
+			point(side, 0.17 * s, sideWidth * 0.8)
+		end
+	end
+
+	-- Velvet cap inside the band, and a gold orb on its top
+	local capHeight = 0.42 * s
+	local cap = add("Part", Vector3.one, CFrame.new(0, bandY + bandHeight / 2 - 0.04 * s, 0), CROWN_VELVET, Enum.Material.Fabric)
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Sphere
+	mesh.Scale = Vector3.new(radius * 1.9, capHeight * 2, radius * 1.9)
+	mesh.Parent = cap
+	local orbY = bandY + bandHeight / 2 - 0.04 * s + capHeight + 0.05 * s
+	add("Part", Vector3.one * 0.16 * s, CFrame.new(0, orbY, 0), CROWN_GOLD, nil, { Shape = Enum.PartType.Ball })
+	-- A little cross on the orb
+	add("Part", Vector3.new(0.04, 0.16, 0.04) * s, CFrame.new(0, orbY + 0.14 * s, 0), CROWN_GOLD)
+	add("Part", Vector3.new(0.12, 0.04, 0.04) * s, CFrame.new(0, orbY + 0.16 * s, 0), CROWN_GOLD)
+
+	-- Now and then a glint of light
+	local glint = Instance.new("ParticleEmitter")
+	glint.Name = "CrownGlint"
+	glint.Color = ColorSequence.new(Color3.fromRGB(255, 240, 180))
+	glint.LightEmission = 1
+	glint.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.35 * s), NumberSequenceKeypoint.new(1, 0) })
+	glint.Lifetime = NumberRange.new(0.4, 0.6)
+	glint.Rate = 1.5
+	glint.Speed = NumberRange.new(0)
+	glint.Rotation = NumberRange.new(0, 90)
+	glint.LockedToPart = true
+	glint.Parent = cap
+
+	crown.Parent = character
+	return crown
+end
+
 ------------------------------------------------------------------ Players
 local function clearOld(character)
 	for _, item in ipairs(character:GetDescendants()) do
@@ -219,21 +328,7 @@ local function applyToCharacter(player)
 	end
 
 	if vip then
-		local crown = Instance.new("Part")
-		crown.Name = "BonkCrown"
-		crown.Size = Vector3.new(1.1, 0.5, 1.1)
-		crown.Color = VIP_GOLD
-		crown.Material = Enum.Material.Neon
-		crown.CanCollide = false
-		crown.CanQuery = false
-		crown.CanTouch = false
-		crown.Massless = true
-		local weld = Instance.new("Weld")
-		weld.Part0 = head
-		weld.Part1 = crown
-		weld.C0 = CFrame.new(0, head.Size.Y / 2 + 0.3, 0)
-		weld.Parent = crown
-		crown.Parent = character
+		buildCrown(character, head)
 	end
 
 	local trailItem = Cosmetics.Equipped(data, "trail", vip)

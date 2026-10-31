@@ -1,7 +1,8 @@
 -- Big round BONK and DASH buttons for phones and tablets, placed around
 -- Roblox's own jump button so the right thumb can reach all three. They fill
 -- up from the bottom while the move recharges. Hold BONK to keep swinging.
--- They live inside Roblox's touch controls, so they hide whenever those hide.
+-- They live inside Roblox's touch controls, so they hide whenever those hide,
+-- and while a menu is open.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -163,6 +164,13 @@ function TouchButtons.Init()
 		end
 		if holdingBonk then
 			Controls.Bonk()
+		end
+		-- Hidden while a menu is open, like Roblox's own stick and jump button
+		local menuOpen = UI.IsWindowOpen()
+		buttons.bonk.button.Visible = not menuOpen
+		buttons.dash.button.Visible = not menuOpen
+		if menuOpen then
+			holdingBonk = false
 		end
 		local bonkReady, dashReady = Controls.Cooldowns()
 		setFill(buttons.bonk.fill, buttons.bonk.info.color, bonkReady)
