@@ -13,6 +13,7 @@ local TutorialService = require(script.TutorialService)
 local ProgressService = require(script.ProgressService)
 local MatchService = require(script.MatchService)
 local WorldService = require(script.WorldService)
+local CommunityService = require(script.CommunityService)
 
 -- Players' screens can't check who owns a private server, so share it
 if game.PrivateServerId ~= "" then
@@ -33,6 +34,12 @@ TutorialService.Start()
 ProgressService.Start()
 MatchService.Start()
 WorldService.Start()
+CommunityService.Start({
+	gameId = "bonk",
+	rewards = { "community_hammer", "community_title" },
+	equip = { hammer = "community_hammer", title = "community_title" },
+	rewardText = "Crew Hammer and Pandot Crew title",
+})
 DataService.Start()
 
 -- Test helpers for Roblox Studio only (never in the live game). In the command

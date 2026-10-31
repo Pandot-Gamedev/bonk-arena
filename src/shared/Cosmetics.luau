@@ -5,7 +5,8 @@
 --         "dance" (your victory dance), "title" (text above your head), "trail"
 -- source: "default" (everyone has it), "coins" (buy with coins in the Locker),
 --         "level" (free at that level), "robux" (developer product, see productId),
---         "vip" (comes with the VIP pass), "earned" (unlocked by playing, see rule)
+--         "vip" (comes with the VIP pass), "earned" (unlocked by playing, see rule),
+--         "community" (free for joining our community, see Shared/OurGames)
 --
 -- HOW TO FILL IN THE PRODUCT IDS (step 5 of the build plan):
 --   Creator Dashboard > your game > Monetization > Developer Products.
@@ -77,6 +78,10 @@ Cosmetics.List = {
 	{ id = "trail_sparkle", kind = "trail", name = "Sparkle Trail", source = "coins", price = 1000, colors = { rgb(0, 170, 255), rgb(0, 255, 200) } },
 	{ id = "trail_fire", kind = "trail", name = "Fire Trail", source = "coins", price = 2000, colors = { rgb(255, 220, 0), rgb(255, 40, 0) } },
 	{ id = "trail_rainbow", kind = "trail", name = "Rainbow Trail", source = "level", level = 40, colors = { rgb(255, 0, 0), rgb(255, 255, 0), rgb(0, 255, 0), rgb(0, 120, 255), rgb(200, 0, 255) } },
+
+	-- Free for joining our community (the Free Gift menu)
+	{ id = "community_hammer", kind = "hammer", name = "Crew Hammer", source = "community", shape = "hammer", head = rgb(0, 220, 200), handle = rgb(150, 80, 255), material = Enum.Material.Neon },
+	{ id = "community_title", kind = "title", name = "Pandot Crew", text = "Pandot Crew", source = "community", color = rgb(0, 230, 210) },
 }
 
 Cosmetics.Defaults = {

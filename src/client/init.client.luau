@@ -13,6 +13,7 @@ local MatchHud = require(script.MatchHud)
 local Hud = require(script.Hud)
 local Guide = require(script.Guide)
 local TouchButtons = require(script.TouchButtons)
+local Community = require(script.Community)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -57,6 +58,12 @@ end
 TouchButtons.Init()
 Effects.Init()
 Panels.Init(screenGui)
+Community.Init(screenGui, {
+	gameId = "bonk",
+	rewardText = "the Crew Hammer and the Pandot Crew title",
+	key = Enum.KeyCode.G,
+})
+Panels.Community = Community.window
 MatchHud.Init(screenGui)
 Hud.Init(screenGui)
 Guide.Init(screenGui)
